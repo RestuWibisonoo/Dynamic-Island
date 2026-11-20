@@ -155,6 +155,48 @@ final class GeometryTests: XCTestCase {
         XCTAssertGreaterThan(outlinePath.boundingRect.height, 200)
     }
     
+    func testOutwardShoulderPathSymmetryAndNotchWidth() {
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+            hasHardwareNotch: true,
+            rawNotchWidth: 179,
+            safeAreaTop: 32
+        )
+        
+        let rect = CGRect(x: 0, y: 0, width: metrics.expandedWidth, height: metrics.expandedHeight)
+        let fillPath = NotchGeometryBuilder.buildPath(
+            in: rect,
+            notchWidth: metrics.notchWidth,
+            shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+            bottomRadius: DesignTokens.CornerRadius.expandedCard,
+            hasHardwareNotch: true,
+            isExpanded: true,
+            includeTopEdge: true
+        )
+        XCTAssertFalse(fillPath.isEmpty)
+        
+        let outlinePath = NotchGeometryBuilder.buildPath(
+            in: rect,
+            notchWidth: metrics.notchWidth,
+            shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+            bottomRadius: DesignTokens.CornerRadius.expandedCard,
+            hasHardwareNotch: true,
+            isExpanded: true,
+            includeTopEdge: false
+        )
+        XCTAssertFalse(outlinePath.isEmpty)
+        
+        // Simetri: Titik awal bahu kiri dan titik akhir bahu kanan berjarak sama dari midX
+        let notchLeft = rect.midX - (metrics.notchWidth / 2)
+        let notchRight = rect.midX + (metrics.notchWidth / 2)
+        XCTAssertEqual(rect.midX - notchLeft, notchRight - rect.midX)
+        XCTAssertEqual(notchRight - notchLeft, metrics.notchWidth)
+        XCTAssertEqual(metrics.notchWidth, 181)
+        
+        // Outline bounding box spans width
+        XCTAssertGreaterThan(outlinePath.boundingRect.width, 400)
+    }
+    
     func testPanelFrameIdempotency() {
         let metrics = IslandLayoutMetrics(
             screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),

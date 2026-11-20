@@ -57,6 +57,11 @@ public final class IslandWindowController {
         self.panel = panel
         self.hostingView = hosting
         
+        // Hubungkan Channel B: Callback event dari NSTrackingArea pada IslandHostingView
+        hosting.onMouseEvent = { [weak self] location, source in
+            self?.updateMouseRouting(location: location, source: source)
+        }
+        
         setupBindings()
         setupMouseTracking()
     }
@@ -105,55 +110,85 @@ public final class IslandWindowController {
         }
     }
     
-    private enum MouseEventSource: String {
-        case global = "Global"
-        case local = "Local"
+    private var isDragging: Bool = false
+    private var lastReportedLocation: NSPoint?
+    
+    public var isCurrentlyDragging: Bool {
+        get { isDragging }
+        set { isDragging = newValue }
     }
     
     private func setupMouseTracking() {
-        // Pelacakan mouse global (saat aplikasi lain seperti browser/YouTube sedang aktif di depan)
+        // Channel A: Pelacakan mouse global (saat aplikasi lain seperti browser/YouTube sedang aktif di depan)
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             Task { @MainActor in
-                self?.handleMouseLocation(NSEvent.mouseLocation, source: .global)
+                self?.updateMouseRouting(location: NSEvent.mouseLocation, source: "GlobalMonitor")
             }
         }
         
-        // Pelacakan mouse lokal (saat panel atau menu bar sedang menerima event)
-        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            self?.handleMouseLocation(NSEvent.mouseLocation, source: .local)
+        // Channel B suplementer & Drag Tracking:
+        // Menangkap event drag mouse agar interaksi slider volume/scrubber tidak terputus di tengah jalan
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self = self else { return event }
+            
+            switch event.type {
+            case .leftMouseDown:
+                let loc = NSEvent.mouseLocation
+                let visibleRect = self.screenDetector.currentMetrics.visibleIslandRect(width: self.viewModel.currentWidth, height: self.viewModel.currentHeight)
+                if visibleRect.contains(loc) {
+                    self.isDragging = true
+                }
+            case .leftMouseDragged:
+                // Selama proses dragging aktif, pertahankan interaksi tetap aktif
+                break
+            case .leftMouseUp:
+                self.isDragging = false
+                self.updateMouseRouting(location: NSEvent.mouseLocation, source: "MouseUp")
+            case .mouseMoved:
+                self.updateMouseRouting(location: NSEvent.mouseLocation, source: "LocalMonitor")
+            default:
+                break
+            }
             return event
         }
     }
     
-    private func handleMouseLocation(_ location: NSPoint, source: MouseEventSource) {
+    /// Metode terpusat dan otoritatif untuk menentukan routing mouse dan interaktivitas panel (Phase 2 & 3)
+    public func updateMouseRouting(location: NSPoint, source: String) {
         guard panel.isVisible else { return }
+        
+        // Deduplikasi jika monitor global dan tracking area melaporkan titik yang persis sama
+        if let last = lastReportedLocation, last == location, source == "GlobalMonitor" && !panel.ignoresMouseEvents {
+            return
+        }
+        lastReportedLocation = location
         
         let metrics = screenDetector.currentMetrics
         
-        // 1. Hitung frame visual fisik dari pulau yang tampak saat ini (tight visible rect)
+        // 1. Boundary visual fisik pulau aktual (tight visible rect)
         let visibleRect = metrics.visibleIslandRect(width: viewModel.currentWidth, height: viewModel.currentHeight)
         let isOverVisibleIsland = visibleRect.contains(location)
         
-        // 2. Hitung zona deteksi hover dengan deadband histeresis (untuk pemicuan ekspansi yang stabil)
+        // 2. Boundary deteksi hover dengan deadband histeresis (untuk pemicuan ekspansi yang stabil)
         let hoverRect = metrics.hoverDetectionRect(for: viewModel.state)
         let isInsideHover = hoverRect.contains(location)
         
-        // Cek apakah pointer berada di dalam frame panel fisik tetap
         let isInsideFixedPanel = metrics.fixedPanelFrame.contains(location)
         
         // 3. Dynamic Mouse Event Routing via ignoresMouseEvents:
-        // WAJIB diperbarui sebelum early-return transisi state apapun!
-        // HANYA ketika pointer berada tepat di atas batas fisik pulau yang tampak,
-        // aktifkan interaksi (ignoresMouseEvents = false) agar user dapat mengklik kontrol.
-        // Begitu pointer bergerak ke luar batas fisik pulau (meskipun masih berada di dalam frame panel fisik 520x260),
-        // setel ignoresMouseEvents = true SEKETIKA tanpa delay!
-        // Ini memastikan macOS Window Server meneruskan 100% event pergerakan kursor ke aplikasi
-        // fullscreen di bawahnya (Chrome/Safari/YouTube) sehingga kontrol navigasi & traffic lights dapat auto-hide secara mulus.
-        let targetIgnores = !isOverVisibleIsland
-        if panel.ignoresMouseEvents != targetIgnores {
-            let previousIgnores = panel.ignoresMouseEvents
-            panel.ignoresMouseEvents = targetIgnores
-            AppLogger.window.info("[\(source.rawValue)] ignoresMouseEvents: \(previousIgnores) -> \(targetIgnores) | point: (\(Int(location.x)), \(Int(location.y))) | visibleRect: \(visibleRect.debugDescription) | insideFixedPanel: \(isInsideFixedPanel)")
+        // Jika user sedang melakukan drag aktif pada kontrol (misal volume scrubber),
+        // JANGAN matikan interaktivitas di tengah jalan!
+        if !isDragging {
+            // Aturan Otoritatif:
+            // 1. Pointer di dalam bentuk fisik pulau -> ignoresMouseEvents = false (interaktif)
+            // 2. Pointer di luar bentuk fisik pulau -> ignoresMouseEvents = true (pass-through)
+            // 3. Pointer di luar bentuk pulau tapi masih di dalam frame fixed NSPanel -> WAJIB seketika ignoresMouseEvents = true!
+            let targetIgnores = !isOverVisibleIsland
+            if panel.ignoresMouseEvents != targetIgnores {
+                let previousIgnores = panel.ignoresMouseEvents
+                panel.ignoresMouseEvents = targetIgnores
+                AppLogger.window.info("[\(source)] ignoresMouseEvents: \(previousIgnores) -> \(targetIgnores) | point: (\(Int(location.x)), \(Int(location.y))) | visibleRect: \(visibleRect.debugDescription) | hoverRect: \(hoverRect.debugDescription) | fixedPanel: \(metrics.fixedPanelFrame.debugDescription) | insideFixed: \(isInsideFixedPanel) | acceptsMouseMoved: \(self.panel.acceptsMouseMovedEvents) | state: \(String(describing: self.viewModel.state))")
+            }
         }
         
         // 4. Jika island baru saja di-dismiss (misal tombol Esc), jangan buka lagi sampai kursor benar-benar keluar
@@ -162,7 +197,7 @@ public final class IslandWindowController {
                 isDismissedUntilExit = false
                 isMouseInside = false
             }
-            if !panel.ignoresMouseEvents {
+            if !panel.ignoresMouseEvents && !isDragging {
                 panel.ignoresMouseEvents = true
             }
             return
@@ -172,7 +207,7 @@ public final class IslandWindowController {
         guard isInsideHover != isMouseInside else { return }
         isMouseInside = isInsideHover
         
-        AppLogger.hover.debug("[\(source.rawValue)] Hover boundary crossed: inside=\(isInsideHover), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
+        AppLogger.hover.debug("[\(source)] Hover boundary crossed: inside=\(isInsideHover), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
         
         viewModel.onHoverChanged(isInsideHover)
     }

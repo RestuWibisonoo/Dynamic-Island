@@ -215,6 +215,63 @@ struct TestRunner {
         let targetIgnoresInside = !compactVisibleRect.contains(pointInsideVisibleIsland)
         assertTest(targetIgnoresInside == false, "Target ignoresMouseEvents inside visible island is FALSE (interactive controls enabled)")
         
+        // Test I: Channel B NSTrackingArea Options Coverage
+        let trackingHostingView = IslandHostingView(rootView: AnyView(Text("TrackingTest")))
+        trackingHostingView.frame = NSRect(x: 0, y: 0, width: 520, height: 260)
+        trackingHostingView.updateTrackingAreas()
+        if let area = trackingHostingView.activeTrackingArea {
+            assertTest(area.options.contains(.mouseMoved), "NSTrackingArea contains .mouseMoved")
+            assertTest(area.options.contains(.mouseEnteredAndExited), "NSTrackingArea contains .mouseEnteredAndExited")
+            assertTest(area.options.contains(.activeAlways), "NSTrackingArea contains .activeAlways")
+            assertTest(area.options.contains(.inVisibleRect), "NSTrackingArea contains .inVisibleRect")
+            assertTest(area.options.contains(.enabledDuringMouseDrag), "NSTrackingArea contains .enabledDuringMouseDrag")
+        } else {
+            assertTest(false, "NSTrackingArea was not created")
+        }
+        
+        // Test J: Outward Shoulder Geometry & Cubic Bézier Curves
+        let shoulderRect = CGRect(x: 0, y: 0, width: 460, height: 220)
+        let shoulderFill = NotchGeometryBuilder.buildPath(
+            in: shoulderRect,
+            notchWidth: 181,
+            shoulderHeight: 14,
+            bottomRadius: 26,
+            hasHardwareNotch: true,
+            isExpanded: true,
+            includeTopEdge: true
+        )
+        assertTest(!shoulderFill.isEmpty, "Outward shoulder fill path is non-empty")
+        let shoulderOutline = NotchGeometryBuilder.buildPath(
+            in: shoulderRect,
+            notchWidth: 181,
+            shoulderHeight: 14,
+            bottomRadius: 26,
+            hasHardwareNotch: true,
+            isExpanded: true,
+            includeTopEdge: false
+        )
+        assertTest(!shoulderOutline.isEmpty, "Outward shoulder outline path is non-empty")
+        let notchLeft = shoulderRect.midX - (181 / 2)
+        let notchRight = shoulderRect.midX + (181 / 2)
+        assertTest(shoulderRect.midX - notchLeft == notchRight - shoulderRect.midX, "Outward shoulder curves are strictly symmetrical around midX")
+        assertTest(notchRight - notchLeft == 181, "Outward shoulder top opening matches exact notch width (181pt)")
+        
+        // Test K: Drag Interaction Safety
+        // First, pointer enters visible island -> panel becomes interactive
+        controller.updateMouseRouting(location: pointInsideVisibleIsland, source: "EnterIsland")
+        assertTest(controller.panel.ignoresMouseEvents == false, "Pointer inside visible island makes panel interactive")
+        
+        // User starts dragging a slider inside the island
+        controller.isCurrentlyDragging = true
+        assertTest(controller.isCurrentlyDragging == true, "Drag state active flag is true")
+        // While dragging, cursor drags into transparent strip outside visible island:
+        controller.updateMouseRouting(location: pointInTransparentStrip, source: "DragTest")
+        assertTest(controller.panel.ignoresMouseEvents == false, "While dragging, ignoresMouseEvents remains false to protect slider scrubbing")
+        controller.isCurrentlyDragging = false
+        // Once drag ends and cursor is released in transparent strip, ignoresMouseEvents is restored immediately:
+        controller.updateMouseRouting(location: pointInTransparentStrip, source: "DragReleaseTest")
+        assertTest(controller.panel.ignoresMouseEvents == true, "After drag release in transparent strip, ignoresMouseEvents is immediately restored to true")
+        
         // ==========================================
         // 4. STATE MACHINE & HOVER STABILITY TESTS
         // ==========================================

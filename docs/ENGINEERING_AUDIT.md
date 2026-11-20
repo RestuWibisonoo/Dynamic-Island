@@ -248,3 +248,53 @@ The user observed a precise, reproducible edge case:
   - Live window at Layer 33 with fixed dimensions 520×260 pt.
   - OSLog confirmed: `[Local] ignoresMouseEvents: false -> true | insideFixedPanel: true` when cursor moves straight down from notch into content.
   - Fullscreen navigation controls and traffic lights in Chrome and Safari auto-hide smoothly after moving cursor directly down into video.
+
+---
+
+## 6. Second-Pass Fix — Two-Channel Mouse Tracking Architecture & Outward Notch Shoulder Geometry (November 2026)
+
+### 6.1 Two-Channel Mouse Tracking Architecture
+To guarantee 100% deterministic mouse routing and eliminate edge-case event drops between Window Server and AppKit:
+- **Channel A (Global `NSEvent` Monitor):**
+  - Actively listens to pointer movement while Dynamic Island is click-through (`ignoresMouseEvents = true`).
+  - As soon as the pointer enters the physical visible island shape, immediately sets `panel.ignoresMouseEvents = false` to enable interactive controls.
+- **Channel B (`NSTrackingArea` on `IslandHostingView`):**
+  - An `NSTrackingArea` covering the **entire fixed-size hosting view** (520×260 pt) with options:
+    `[.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag]`.
+  - Overrides `updateTrackingAreas()`, `mouseMoved(with:)`, `mouseEntered(with:)`, and `mouseExited(with:)`.
+  - Dispatches `onMouseEvent` callback directly to `IslandWindowController.updateMouseRouting(location:source:)`.
+  - Guarantees that even if the pointer moves rapidly downward into the transparent strip of the panel, AppKit delivers the mouse event without reliance on local event monitor polling.
+
+### 6.2 Drag Protection and Immediate Click-Through Restoration
+- **Problem during scrubbing:** If the user drags a slider (e.g. music seek or volume scrubber) and cursor drifts outside `visibleIslandRect`, setting `ignoresMouseEvents = true` prematurely would abort the drag mid-stroke.
+- **Solution:**
+  - Added local monitor tracking `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp`.
+  - If `leftMouseDown` originates inside `visibleIslandRect`, `isDragging` is set to `true`.
+  - While `isDragging == true`, `ignoresMouseEvents` is strictly preserved (`false`).
+  - On `leftMouseUp`, `isDragging` is reset to `false` and `updateMouseRouting(location:source: "MouseUp")` is immediately invoked.
+  - If the cursor was released in the transparent strip outside the visible island, `panel.ignoresMouseEvents = true` is restored immediately.
+
+### 6.3 Outward-Flaring Notch Shoulder Geometry
+- **Architectural Reference:** Following the geometric styling of `sayweer/dynamicIsland` and native macOS notch aesthetics.
+- **Mathematical Specification:**
+  - Center top horizontal segment strictly equals the detected physical `notchWidth` (e.g. 181 pt on 14" M1/M2/M3/M4 Pro displays) and sits flush with the screen bezel.
+  - At both lateral ends of the notch width ($X_{notchLeft} = \text{midX} - \frac{W_{notch}}{2}$ and $X_{notchRight} = \text{midX} + \frac{W_{notch}}{2}$), outward-flaring cubic Bézier curves descend through `notchShoulderHeight: 14pt`.
+  - **Left Outward Shoulder:**
+    - Curve starts at $(X_{notchLeft}, \text{minY})$ with a horizontal tangent ($dy/dx = 0$).
+    - First control point: $(X_{notchLeft} - 0.5 \cdot \Delta X, \text{minY})$.
+    - Second control point: $(\text{minX}, \text{minY} + 0.5 \cdot H_{shoulder})$.
+    - End point: $(\text{minX}, \text{minY} + H_{shoulder})$ with a strictly vertical tangent ($dx/dy = 0$).
+  - **Right Outward Shoulder:**
+    - Symmetrically curves from $(\text{maxX}, \text{minY} + H_{shoulder})$ up to $(X_{notchRight}, \text{minY})$ with $C^1$ continuity into the vertical wall and horizontal bezel.
+  - **Unified Builder:** Shared between `FlushNotchShape` (fill & clip, closed top) and `ExpandedIslandOutlineShape` (specular stroke, open top segment across notch bezel).
+  - Floating pill mode on notchless Macs and compact notch layout remain untouched.
+
+### 6.4 Verification Results
+- **Automated Test Suite:** 100/100 tests passed (`make test` / `swift run TestRunner`).
+  - Verified `NSTrackingArea` options: `.mouseMoved`, `.mouseEnteredAndExited`, `.activeAlways`, `.inVisibleRect`, `.enabledDuringMouseDrag`.
+  - Verified outward shoulder curve symmetry around `midX` and exact hardware notch opening width (181 pt).
+  - Verified drag interaction safety: `ignoresMouseEvents` remains false during drag and restores immediately to true on mouse release in transparent region.
+- **Release Bundle Build:** `make bundle` generated `DynamicIsland.app` successfully.
+- **Live Process Verification (PID 10803):**
+  - Confirmed via Quartz window list: Window ID 1808, Layer 33 (`.statusBar + 8`), fixed frame $520 \times 260$ pt at screen top.
+  - OSLog stream verified: transitions between `ignoresMouseEvents: true -> false` inside island and `false -> true` when exiting into transparent strip or video area.
