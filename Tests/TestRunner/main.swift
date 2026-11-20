@@ -148,17 +148,22 @@ struct TestRunner {
         simulatedIslandHeight = 220
         assertTest(hostingView.hitTest(pointOutsideIsland) != nil, "Hit-test at (230, 50) returns view when island is expanded")
         
-        // Test D: Open Top Outline Shape (No upper border across physical bezel)
-        let outlineShape = ExpandedIslandOutlineShape(cornerRadius: 26, hasHardwareNotch: true)
+        // Test D: Open Top Outline Shape (No upper border across physical bezel, smooth upper corner curves)
+        let outlineShape = ExpandedIslandOutlineShape(topCornerRadius: 8, bottomCornerRadius: 26, hasHardwareNotch: true)
         let outlinePath = outlineShape.path(in: CGRect(x: 0, y: 0, width: 460, height: 220))
         assertTest(!outlinePath.isEmpty, "Expanded outline path is generated")
-        // The outline starts at (0, 0) and ends at (460, 0) without a top horizontal closing segment
+        // The outline starts at (8, 0), curves smoothly around upper-left, and ends at (452, 0) without a top horizontal closing segment
         let pathBounds = outlinePath.boundingRect
         assertTest(pathBounds.width > 400 && pathBounds.height > 200, "Outline shape spans full card bounds")
+        
+        let fillShape = FlushNotchShape(topCornerRadius: 8, bottomCornerRadius: 26, hasHardwareNotch: true, isExpanded: true)
+        let fillPath = fillShape.path(in: CGRect(x: 0, y: 0, width: 460, height: 220))
+        assertTest(!fillPath.isEmpty, "Expanded fill shape path is generated with smooth upper corners")
         
         // Test E: Panel ignoresMouseEvents & Window Level behavior
         let testPanel = IslandPanel(contentRect: NSRect(x: 100, y: 100, width: 333, height: 33.5))
         assertTest(testPanel.ignoresMouseEvents == true, "Panel ignores mouse events by default (pass-through for fullscreen auto-hide)")
+        assertTest(testPanel.acceptsMouseMovedEvents == true, "Panel accepts mouseMoved events so local monitor receives cursor exit")
         testPanel.ignoresMouseEvents = false
         assertTest(testPanel.ignoresMouseEvents == false, "Panel enables mouse events dynamically when cursor enters island")
         let expectedLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 8)
@@ -189,6 +194,26 @@ struct TestRunner {
         
         mockVM.transitionTo(state: .compact)
         assertTest(controller.panel.frame == mockDetector.currentMetrics.fixedPanelFrame, "Collapsing state DOES NOT resize NSPanel (panel frame remains invariant)")
+        
+        // Test H: Regression Test for Pointer Outside Visible Island but Inside Fixed NSPanel Frame
+        let metrics = mockDetector.currentMetrics
+        let compactVisibleRect = metrics.visibleIslandRect(for: .compact)
+        let fixedPanelFrame = metrics.fixedPanelFrame
+        
+        // Titik 80pt di bawah tepi atas layar:
+        // Berada di DALAM fixedPanelFrame (tinggi 260pt: y dari 696 ke 956)
+        // Berada di LUAR compactVisibleRect (tinggi 33.5pt: y dari 922.5 ke 956)
+        let pointInTransparentStrip = NSPoint(x: metrics.screenFrame.midX, y: metrics.screenFrame.maxY - 80)
+        assertTest(fixedPanelFrame.contains(pointInTransparentStrip) == true, "Test point (y = maxY - 80) is inside fixed NSPanel frame")
+        assertTest(compactVisibleRect.contains(pointInTransparentStrip) == false, "Test point is outside compact visible island rect")
+        
+        let targetIgnoresInStrip = !compactVisibleRect.contains(pointInTransparentStrip)
+        assertTest(targetIgnoresInStrip == true, "Target ignoresMouseEvents in transparent strip of fixed panel is TRUE (pass-through for auto-hide)")
+        
+        let pointInsideVisibleIsland = NSPoint(x: metrics.screenFrame.midX, y: metrics.screenFrame.maxY - 10)
+        assertTest(compactVisibleRect.contains(pointInsideVisibleIsland) == true, "Point inside physical compact shape is inside visibleIslandRect")
+        let targetIgnoresInside = !compactVisibleRect.contains(pointInsideVisibleIsland)
+        assertTest(targetIgnoresInside == false, "Target ignoresMouseEvents inside visible island is FALSE (interactive controls enabled)")
         
         // ==========================================
         // 4. STATE MACHINE & HOVER STABILITY TESTS

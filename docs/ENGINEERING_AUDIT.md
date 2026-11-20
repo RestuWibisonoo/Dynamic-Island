@@ -186,3 +186,65 @@ To permanently eliminate hover detachment and fullscreen auto-hide failures, we 
 - **Automated Test Suite:** 80/80 assertions passed (`make test` / `swift run TestRunner`).
 - **Release Build:** `swift build -c release` & `make bundle` completed cleanly with 0 errors.
 - **Live macOS Verification:** App bundle running live (PID 9273) confirmed at Layer 33 with fixed dimensions (`520 × 260`, `Y: 0, X: 475`). Zero hover detachment and flawless fullscreen pass-through.
+
+---
+
+## 5. Targeted Fix — Fullscreen Mouse Event Routing & Smooth Notch Curves (November 2026)
+
+### 5.1 Root Cause of the Residual Fullscreen Auto-Hide Trap
+The user observed a precise, reproducible edge case:
+1. Hovering Dynamic Island in fullscreen Chrome/Safari.
+2. Moving directly down into video content left the fullscreen toolbar and traffic lights permanently stuck.
+3. However, moving horizontally to the Apple logo or battery icon and then moving down allowed the toolbar to auto-hide normally.
+
+**The Mechanical Cause in AppKit Event Dispatch:**
+- `IslandPanel` was configured with:
+  ```swift
+  self.acceptsMouseMovedEvents = false
+  ```
+- **The Event Routing Split:**
+  - `NSEvent.addGlobalMonitorForEvents` receives pointer movements dispatched to **other applications** (e.g. while `ignoresMouseEvents = true`).
+  - `NSEvent.addLocalMonitorForEvents` receives pointer movements dispatched to **our own application** (e.g. while `ignoresMouseEvents = false`).
+- **The Trap:**
+  1. Cursor entered visible island: `globalMouseMonitor` detected it and set `ignoresMouseEvents = false`.
+  2. Now `IslandPanel` owned mouse event dispatch in the Window Server across its 520×260 fixed frame.
+  3. Because `acceptsMouseMovedEvents` was `false`, AppKit suppressed all `mouseMoved:` delivery to `IslandPanel`!
+  4. Consequently, `localMouseMonitor` **never fired** when the cursor moved from the visible island down into the transparent portion of the fixed 520×260 panel.
+  5. `handleMouseLocation` was never called, leaving `ignoresMouseEvents = false` indefinitely!
+  6. The transparent portion of the fixed panel continued intercepting mouse moves, starving the underlying browser of pointer movement in the video area.
+  7. Moving horizontally to the Apple logo or battery icon exited the 520pt fixed width (`x < 475` or `x > 995`). In that region, Window Server dispatched events to macOS Menu Bar / Window Server, allowing `globalMouseMonitor` to fire and finally restore `ignoresMouseEvents = true`!
+
+### 5.2 The Event-Routing Resolution
+1. **`IslandPanel.acceptsMouseMovedEvents = true`:**
+   Enables AppKit to deliver `mouseMoved:` events to `IslandPanel` and `localMouseMonitor` whenever `ignoresMouseEvents = false`.
+2. **Prioritized `ignoresMouseEvents` Update in `handleMouseLocation`:**
+   - Evaluates `let targetIgnores = !isOverVisibleIsland`.
+   - Executes the `panel.ignoresMouseEvents` update immediately **before** any early return (such as `isDismissedUntilExit`).
+   - The instant the cursor leaves `visibleIslandRect`—even while remaining inside `fixedPanelFrame`—`localMouseMonitor` sets `panel.ignoresMouseEvents = true` with zero delay.
+   - The Window Server immediately redirects subsequent pointer moves through to Chrome / Safari / YouTube.
+3. **Structured Diagnostics:**
+   Added state transition logging indicating event source (`[Global]` vs `[Local]`), cursor position, visible rect, and `insideFixedPanel` status.
+
+### 5.3 Smooth Upper Notch Curves
+- **Problem:** The previous expanded island had sharp, 90-degree right angles at the upper corners where it expanded beyond the hardware notch.
+- **Solution:**
+  - Introduced separate top and bottom corner radii:
+    - `topCornerRadius: 8` pt (`DesignTokens.CornerRadius.expandedNotchTop`).
+    - `bottomCornerRadius: 26` pt (`DesignTokens.CornerRadius.expandedCard`).
+  - Built unified `NotchGeometryBuilder.buildPath(in:topRadius:bottomRadius:hasHardwareNotch:includeTopEdge:)`:
+    - Upper-left corner: quadratic curve with horizontal tangent at the bezel curving smoothly into the vertical left edge.
+    - Central upper edge: completely flush with the top bezel.
+    - Upper-right corner: quadratic curve curving from vertical right edge into horizontal bezel tangent.
+    - Sisi atas tetap terbuka (`includeTopEdge: false`) pada `ExpandedIslandOutlineShape` sehingga specular border tidak membentuk garis ganda di bezel.
+    - `FlushNotchShape` dan `ExpandedIslandOutlineShape` berbagi generator geometri yang sama sehingga fill, clip, dan outline tidak akan mengalami pergeseran atau celah.
+
+### 5.4 Verification Results
+- **Automated Test Suite:** 87/87 assertions passed (`make test` / `swift run TestRunner`).
+  - Added regression test for pointer in transparent strip (`insideFixedPanel == true && isOverVisibleIsland == false -> ignoresMouseEvents == true`).
+  - Added assertion `testPanel.acceptsMouseMovedEvents == true`.
+  - Added curve geometry tests for upper corner radii.
+- **Release Build:** `swift build -c release` & `make bundle` completed with 0 errors.
+- **Live macOS Verification (PID 9914):**
+  - Live window at Layer 33 with fixed dimensions 520×260 pt.
+  - OSLog confirmed: `[Local] ignoresMouseEvents: false -> true | insideFixedPanel: true` when cursor moves straight down from notch into content.
+  - Fullscreen navigation controls and traffic lights in Chrome and Safari auto-hide smoothly after moving cursor directly down into video.

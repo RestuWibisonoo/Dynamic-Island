@@ -22,7 +22,8 @@ public struct IslandRootView: View {
             ZStack(alignment: .top) {
                 // Background Pulau (Menggunakan ThemeManager, bukan Color.black statis)
                 FlushNotchShape(
-                    cornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
+                    topCornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedNotchTop : 0,
+                    bottomCornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
                     hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch,
                     isExpanded: viewModel.state.isExpanded
                 )
@@ -32,7 +33,8 @@ public struct IslandRootView: View {
                     Group {
                         if viewModel.state.isExpanded {
                             ExpandedIslandOutlineShape(
-                                cornerRadius: DesignTokens.CornerRadius.expandedCard,
+                                topCornerRadius: DesignTokens.CornerRadius.expandedNotchTop,
+                                bottomCornerRadius: DesignTokens.CornerRadius.expandedCard,
                                 hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch
                             )
                             .stroke(themeManager.borderGradient, lineWidth: 0.75)
@@ -52,7 +54,8 @@ public struct IslandRootView: View {
             .frame(width: viewModel.currentWidth, height: viewModel.currentHeight, alignment: .top)
             .clipShape(
                 FlushNotchShape(
-                    cornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
+                    topCornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedNotchTop : 0,
+                    bottomCornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
                     hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch,
                     isExpanded: viewModel.state.isExpanded
                 )

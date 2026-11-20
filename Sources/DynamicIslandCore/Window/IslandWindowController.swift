@@ -105,22 +105,27 @@ public final class IslandWindowController {
         }
     }
     
+    private enum MouseEventSource: String {
+        case global = "Global"
+        case local = "Local"
+    }
+    
     private func setupMouseTracking() {
         // Pelacakan mouse global (saat aplikasi lain seperti browser/YouTube sedang aktif di depan)
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             Task { @MainActor in
-                self?.handleMouseLocation(NSEvent.mouseLocation)
+                self?.handleMouseLocation(NSEvent.mouseLocation, source: .global)
             }
         }
         
         // Pelacakan mouse lokal (saat panel atau menu bar sedang menerima event)
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            self?.handleMouseLocation(NSEvent.mouseLocation)
+            self?.handleMouseLocation(NSEvent.mouseLocation, source: .local)
             return event
         }
     }
     
-    private func handleMouseLocation(_ location: NSPoint) {
+    private func handleMouseLocation(_ location: NSPoint, source: MouseEventSource) {
         guard panel.isVisible else { return }
         
         let metrics = screenDetector.currentMetrics
@@ -133,7 +138,25 @@ public final class IslandWindowController {
         let hoverRect = metrics.hoverDetectionRect(for: viewModel.state)
         let isInsideHover = hoverRect.contains(location)
         
-        // Jika island baru saja di-dismiss (misal tombol Esc), jangan buka lagi sampai kursor benar-benar keluar
+        // Cek apakah pointer berada di dalam frame panel fisik tetap
+        let isInsideFixedPanel = metrics.fixedPanelFrame.contains(location)
+        
+        // 3. Dynamic Mouse Event Routing via ignoresMouseEvents:
+        // WAJIB diperbarui sebelum early-return transisi state apapun!
+        // HANYA ketika pointer berada tepat di atas batas fisik pulau yang tampak,
+        // aktifkan interaksi (ignoresMouseEvents = false) agar user dapat mengklik kontrol.
+        // Begitu pointer bergerak ke luar batas fisik pulau (meskipun masih berada di dalam frame panel fisik 520x260),
+        // setel ignoresMouseEvents = true SEKETIKA tanpa delay!
+        // Ini memastikan macOS Window Server meneruskan 100% event pergerakan kursor ke aplikasi
+        // fullscreen di bawahnya (Chrome/Safari/YouTube) sehingga kontrol navigasi & traffic lights dapat auto-hide secara mulus.
+        let targetIgnores = !isOverVisibleIsland
+        if panel.ignoresMouseEvents != targetIgnores {
+            let previousIgnores = panel.ignoresMouseEvents
+            panel.ignoresMouseEvents = targetIgnores
+            AppLogger.window.info("[\(source.rawValue)] ignoresMouseEvents: \(previousIgnores) -> \(targetIgnores) | point: (\(Int(location.x)), \(Int(location.y))) | visibleRect: \(visibleRect.debugDescription) | insideFixedPanel: \(isInsideFixedPanel)")
+        }
+        
+        // 4. Jika island baru saja di-dismiss (misal tombol Esc), jangan buka lagi sampai kursor benar-benar keluar
         if isDismissedUntilExit {
             if !isInsideHover && !isOverVisibleIsland {
                 isDismissedUntilExit = false
@@ -145,25 +168,11 @@ public final class IslandWindowController {
             return
         }
         
-        // 3. Dynamic Mouse Event Routing via ignoresMouseEvents:
-        // HANYA ketika pointer berada tepat di atas batas fisik pulau yang tampak,
-        // aktifkan interaksi (ignoresMouseEvents = false) agar user dapat mengklik tombol kontrol (Play, Pause, Pin, Slider).
-        // Begitu pointer bergerak ke luar batas fisik pulau (menuju area video fullscreen atau toolbar Chrome),
-        // setel ignoresMouseEvents = true SEKETIKA tanpa delay!
-        // Ini memastikan macOS Window Server meneruskan 100% event pergerakan kursor ke aplikasi
-        // fullscreen di bawahnya (Chrome/Safari/YouTube) sehingga kontrol navigasi & tombol traffic light
-        // dapat melakukan auto-hide secara mulus tanpa terhalang sama sekali.
-        let targetIgnores = !isOverVisibleIsland
-        if panel.ignoresMouseEvents != targetIgnores {
-            panel.ignoresMouseEvents = targetIgnores
-            AppLogger.window.debug("panel.ignoresMouseEvents updated to \(targetIgnores)")
-        }
-        
-        // 4. Filter redundan untuk pemicu State Machine ViewModel
+        // 5. Filter redundan untuk pemicu State Machine ViewModel
         guard isInsideHover != isMouseInside else { return }
         isMouseInside = isInsideHover
         
-        AppLogger.hover.debug("Hover boundary crossed: inside=\(isInsideHover), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
+        AppLogger.hover.debug("[\(source.rawValue)] Hover boundary crossed: inside=\(isInsideHover), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
         
         viewModel.onHoverChanged(isInsideHover)
     }

@@ -37,7 +37,11 @@ public final class IslandPanel: NSPanel {
         self.hidesOnDeactivate = false
         self.isReleasedWhenClosed = false
         self.becomesKeyOnlyIfNeeded = false
-        self.acceptsMouseMovedEvents = false
+        // acceptsMouseMovedEvents WAJIB true:
+        // Saat pointer berada di atas pulau dan ignoresMouseEvents = false,
+        // panel harus menerima event mouseMoved agar local mouse monitor dapat mendeteksi
+        // momen ketika pointer meninggalkan bentuk fisik pulau dan seketika menyetel ignoresMouseEvents = true.
+        self.acceptsMouseMovedEvents = true
         self.ignoresMouseEvents = true
         
         setupKeyMonitors()

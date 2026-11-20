@@ -23,6 +23,8 @@ public enum DesignTokens {
         public static let compactNotchBottom: CGFloat = 12
         public static let compactPill: CGFloat = 16
         public static let expandedCard: CGFloat = 26
+        /// Radius lengkungan sudut atas pulau saat mode expanded (transisi halus dari bezel notch fisik)
+        public static let expandedNotchTop: CGFloat = 8
         public static let innerCard: CGFloat = 16
         public static let artwork: CGFloat = 12
         public static let capsule: CGFloat = 99

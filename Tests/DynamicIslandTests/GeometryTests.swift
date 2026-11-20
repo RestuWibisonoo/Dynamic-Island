@@ -133,6 +133,28 @@ final class GeometryTests: XCTestCase {
         XCTAssertEqual(expandedVisible.maxY, 956 + 6)
     }
     
+    func testSmoothNotchUpperCurvesAndOpenTop() {
+        let shape = FlushNotchShape(
+            topCornerRadius: 8,
+            bottomCornerRadius: 26,
+            hasHardwareNotch: true,
+            isExpanded: true
+        )
+        let rect = CGRect(x: 0, y: 0, width: 460, height: 220)
+        let fillPath = shape.path(in: rect)
+        XCTAssertFalse(fillPath.isEmpty)
+        
+        let outline = ExpandedIslandOutlineShape(
+            topCornerRadius: 8,
+            bottomCornerRadius: 26,
+            hasHardwareNotch: true
+        )
+        let outlinePath = outline.path(in: rect)
+        XCTAssertFalse(outlinePath.isEmpty)
+        XCTAssertGreaterThan(outlinePath.boundingRect.width, 400)
+        XCTAssertGreaterThan(outlinePath.boundingRect.height, 200)
+    }
+    
     func testPanelFrameIdempotency() {
         let metrics = IslandLayoutMetrics(
             screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
