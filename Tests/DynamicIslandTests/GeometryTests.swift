@@ -164,10 +164,10 @@ final class GeometryTests: XCTestCase {
         )
         
         let rect = CGRect(x: 0, y: 0, width: metrics.expandedWidth, height: metrics.expandedHeight)
-        let fillPath = NotchGeometryBuilder.buildPath(
+        let fillPath = IslandSilhouette.path(
             in: rect,
             notchWidth: metrics.notchWidth,
-            shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+            shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
             bottomRadius: DesignTokens.CornerRadius.expandedCard,
             hasHardwareNotch: true,
             isExpanded: true,
@@ -175,10 +175,10 @@ final class GeometryTests: XCTestCase {
         )
         XCTAssertFalse(fillPath.isEmpty)
         
-        let outlinePath = NotchGeometryBuilder.buildPath(
+        let outlinePath = IslandSilhouette.path(
             in: rect,
             notchWidth: metrics.notchWidth,
-            shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+            shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
             bottomRadius: DesignTokens.CornerRadius.expandedCard,
             hasHardwareNotch: true,
             isExpanded: true,

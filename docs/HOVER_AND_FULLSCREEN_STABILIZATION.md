@@ -228,3 +228,44 @@ All 63 automated test assertions passed cleanly:
 1. Hover to expand island, click "Kunci" (Pin).
 2. Move pointer away: island stays locked open.
 3. Press `Escape`: island collapses immediately. `isDismissedUntilExit` prevents immediate re-expansion until the cursor leaves the notch area.
+
+---
+
+## 5. Definitive Fullscreen Architecture: Active Mouse-Position Watchdog & Outward Continuous Curves (November 2026)
+
+### 5.1 Why Event-Exit Dependency Failed
+Previous approaches relied on passive event delivery (`localMouseMonitor` on `mouseMoved` or `NSTrackingArea`). In macOS Window Server architecture:
+1. When `panel.ignoresMouseEvents = false`, `IslandPanel` captures cursor ownership in its fixed $520 \times 260$ pt frame.
+2. Even with `hitTest() == nil` in transparent regions, AppKit does not automatically redispatch `mouseMoved` events across application process boundaries to Chrome or Safari while the window maintains event interception.
+3. If mouse movement is rapid or directed straight down into video content, local mouse-moved events can be dropped or delayed by the event dispatcher.
+4. Any debounce or collapse animation delay (280ms) left `ignoresMouseEvents = false` active, starving the browser's Immersive Fullscreen auto-hide timer.
+
+### 5.2 The Active Mouse-Position Watchdog Solution
+The watchdog replaces event-exit dependency with active geometric verification:
+- **Global Entry Monitor**: Listens for pointer moves while click-through (`ignoresMouseEvents = true`). When pointer enters `visibleIslandRect`, invokes `setPanelInteractive(true, reason: "GLOBAL_ENTER")`.
+- **Lightweight 50 Hz Watchdog Engine**:
+  - Runs on `RunLoop.main` in `.common` modes at a `1.0 / 50.0`s interval (~50 Hz).
+  - Reads `NSEvent.mouseLocation` and checks freshly calculated `visibleIslandRect(width:height:)`.
+  - Guarantees only one watchdog timer runs (no duplicates).
+- **Instant Click-Through on Exit**:
+  - The instant the cursor leaves `visibleIslandRect`, `setPanelInteractive(false, reason: "WATCHDOG_POINTER_OUTSIDE_VISIBLE_RECT")` is invoked immediately.
+  - `panel.ignoresMouseEvents = true` happens **BEFORE** any hover exit or collapse scheduling.
+  - The browser's input path is immediately unblocked; subsequent mouse moves in the video area trigger the browser's native auto-hide countdown.
+- **Drag Protection**:
+  - Local monitor tracks `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp`.
+  - While dragging a control (slider scrubber), `isDragging == true` protects `ignoresMouseEvents` from premature restoration.
+  - On `.leftMouseUp`, `isDragging` resets to `false`, and location is reevaluated immediately.
+- **Diagnostic Logging & Fallback**:
+  - Logs only state transitions with pointer coordinates, visible rect, fixed frame, and window level.
+  - Debug diagnostic mode available to verify panel obstruction vs event routing.
+
+### 5.3 Outward Continuous Curve Silhouette Geometry
+Implemented via `IslandSilhouette.path`:
+- **Narrow Top Attachment**: Top horizontal segment strictly equals physical `notchWidth` (181 pt on 14" MacBook Pro) and rests flush against the bezel.
+- **Outward Continuous Flaring**:
+  - Right Outward Cubic Curve: `(neckRight, rect.minY)` to `(rect.maxX, shoulderY)` with control points `(neckRight + rightSpan * 0.45, rect.minY)` and `(rect.maxX, shoulderY - shoulderDepth * 0.45)`.
+  - Left Outward Cubic Curve: `(rect.minX, shoulderY)` to `(neckLeft, rect.minY)` with control points `(rect.minX, shoulderY - shoulderDepth * 0.45)` and `(neckLeft - leftSpan * 0.45, rect.minY)`.
+  - Tangents: Strictly horizontal at the bezel ($dy/dx = 0$), strictly vertical at outer walls ($dx/dy = 0$).
+  - Bottom corners retain $26$pt continuous card rounding.
+- **Open-Top Specular Border**:
+  - `ExpandedIslandOutlineShape` uses the exact same curve helper, leaving the central top edge open so specular strokes do not double-line against the physical notch bezel.

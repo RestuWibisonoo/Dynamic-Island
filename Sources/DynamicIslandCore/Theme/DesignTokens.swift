@@ -17,10 +17,12 @@ public enum DesignTokens {
     public enum Geometry {
         /// Penyesuaian vertikal ke bawah (dalam pt) agar menutupi tompel fisik notch 100% tanpa celah di atas
         public static let notchVerticalOffset: CGFloat = 1.5
-        /// Kedalaman vertikal bahu lengkungan luar (outward shoulder) saat expanded
-        public static let notchShoulderHeight: CGFloat = 14
-        /// Ketegangan kurva bahu cubic Bézier (0.5 = natural smooth transition)
-        public static let notchShoulderTension: CGFloat = 0.5
+        /// Kedalaman vertikal bahu lengkungan luar (outward shoulder) saat expanded (16-22pt)
+        public static let notchShoulderDepth: CGFloat = 18.0
+        /// Kompatibilitas alias untuk notchShoulderDepth
+        public static let notchShoulderHeight: CGFloat = 18.0
+        /// Ketegangan kurva bahu cubic Bézier (0.45 = natural smooth transition)
+        public static let notchShoulderTension: CGFloat = 0.45
     }
     
     public enum CornerRadius {

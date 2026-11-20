@@ -23,7 +23,7 @@ public struct IslandRootView: View {
                 // Background Pulau (Menggunakan ThemeManager, bukan Color.black statis)
                 FlushNotchShape(
                     notchWidth: viewModel.screenDetector.currentMetrics.notchWidth,
-                    shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+                    shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
                     bottomCornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
                     hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch,
                     isExpanded: viewModel.state.isExpanded
@@ -35,7 +35,7 @@ public struct IslandRootView: View {
                         if viewModel.state.isExpanded {
                             ExpandedIslandOutlineShape(
                                 notchWidth: viewModel.screenDetector.currentMetrics.notchWidth,
-                                shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+                                shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
                                 bottomCornerRadius: DesignTokens.CornerRadius.expandedCard,
                                 hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch
                             )
@@ -57,7 +57,7 @@ public struct IslandRootView: View {
             .clipShape(
                 FlushNotchShape(
                     notchWidth: viewModel.screenDetector.currentMetrics.notchWidth,
-                    shoulderHeight: DesignTokens.Geometry.notchShoulderHeight,
+                    shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
                     bottomCornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
                     hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch,
                     isExpanded: viewModel.state.isExpanded

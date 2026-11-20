@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Pengendali jendela NSPanel yang mengelola penempatan, ukuran dinamis, dan pelacakan interaksi kursor
+/// Pengendali jendela NSPanel yang mengelola penempatan, ukuran dinamis, dan pelacakan interaksi kursor.
+/// Menggunakan arsitektur Active Mouse-Position Watchdog (Part A) untuk determinisme 100% pada auto-hide fullscreen.
 @MainActor
 public final class IslandWindowController {
     public let panel: IslandPanel
@@ -16,8 +17,26 @@ public final class IslandWindowController {
     private nonisolated(unsafe) var globalMouseMonitor: Any?
     private nonisolated(unsafe) var localMouseMonitor: Any?
     
+    // ==========================================
+    // WATCHDOG STATE (PART A.2 & A.3)
+    // ==========================================
+    private var watchdogTimer: Timer?
+    public private(set) var isWatchdogRunning: Bool = false
+    public var watchdogPollingInterval: TimeInterval = 1.0 / 50.0 // ~50 Hz
+    
+    private var isDragging: Bool = false
     private var isMouseInside: Bool = false
     private var isDismissedUntilExit: Bool = false
+    
+    public var isCurrentlyDragging: Bool {
+        get { isDragging }
+        set { isDragging = newValue }
+    }
+    
+    #if DEBUG
+    public var isDiagnosticFallbackEnabled: Bool = false
+    public private(set) var diagnosticLastExitTimestamp: Date?
+    #endif
     
     public init(viewModel: IslandViewModel, screenDetector: ScreenDetector) {
         self.viewModel = viewModel
@@ -26,8 +45,6 @@ public final class IslandWindowController {
         let initialMetrics = screenDetector.currentMetrics
         // Arsitektur Jendela Tetap (Fixed-Size NSPanel Architecture):
         // Panel selalu berukuran tetap (maksimum dimensi ekspansi + margin) dan di-anchor ke tepi atas layar.
-        // Dengan demikian panel tidak pernah di-resize saat runtime, origin Cocoa tidak melompat,
-        // dan Dynamic Island tidak pernah terlepas dari notch fisik saat ekspansi/penyusutan.
         let fixedFrame = initialMetrics.fixedPanelFrame
         
         let panel = IslandPanel(contentRect: fixedFrame)
@@ -57,16 +74,14 @@ public final class IslandWindowController {
         self.panel = panel
         self.hostingView = hosting
         
-        // Hubungkan Channel B: Callback event dari NSTrackingArea pada IslandHostingView
-        hosting.onMouseEvent = { [weak self] location, source in
-            self?.updateMouseRouting(location: location, source: source)
-        }
-        
         setupBindings()
         setupMouseTracking()
     }
     
     deinit {
+        MainActor.assumeIsolated {
+            stopWatchdog()
+        }
         if let monitor = globalMouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -95,9 +110,6 @@ public final class IslandWindowController {
             }
             .store(in: &cancellables)
         
-        // Sinkronisasi perubahan status (compact vs expanded):
-        // Pada Arsitektur Fixed-Size NSPanel, jendela fisik TIDAK PERNAH di-resize saat runtime.
-        // Hanya konten SwiftUI di dalamnya yang menganimasikan lebar dan tingginya secara mulus.
         viewModel.onResizeRequest = { [weak self] state, isImmediate in
             self?.handleStateResize(state: state, isImmediate: isImmediate)
         }
@@ -106,29 +118,45 @@ public final class IslandWindowController {
         viewModel.onDismissLock = { [weak self] in
             guard let self = self else { return }
             self.isDismissedUntilExit = true
-            self.panel.ignoresMouseEvents = true
+            self.setPanelInteractive(false, reason: "DISMISS_LOCK")
         }
-    }
-    
-    private var isDragging: Bool = false
-    private var lastReportedLocation: NSPoint?
-    
-    public var isCurrentlyDragging: Bool {
-        get { isDragging }
-        set { isDragging = newValue }
     }
     
     private func setupMouseTracking() {
-        // Channel A: Pelacakan mouse global (saat aplikasi lain seperti browser/YouTube sedang aktif di depan)
+        // Global Monitor: Mendeteksi masuknya kursor saat panel berada dalam status click-through (ignoresMouseEvents == true)
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             Task { @MainActor in
-                self?.updateMouseRouting(location: NSEvent.mouseLocation, source: "GlobalMonitor")
+                guard let self = self else { return }
+                guard self.panel.isVisible else { return }
+                
+                let loc = NSEvent.mouseLocation
+                let metrics = self.screenDetector.currentMetrics
+                let visibleRect = metrics.visibleIslandRect(width: self.viewModel.currentWidth, height: self.viewModel.currentHeight)
+                
+                if visibleRect.contains(loc) {
+                    if self.isDismissedUntilExit { return }
+                    
+                    self.setPanelInteractive(true, reason: "GLOBAL_ENTER")
+                    
+                    let hoverRect = metrics.hoverDetectionRect(for: self.viewModel.state)
+                    if hoverRect.contains(loc) && !self.isMouseInside {
+                        self.isMouseInside = true
+                        self.viewModel.onHoverChanged(true)
+                    }
+                } else {
+                    if self.isDismissedUntilExit {
+                        let hoverRect = metrics.hoverDetectionRect(for: self.viewModel.state)
+                        if !hoverRect.contains(loc) {
+                            self.isDismissedUntilExit = false
+                            self.isMouseInside = false
+                        }
+                    }
+                }
             }
         }
         
-        // Channel B suplementer & Drag Tracking:
-        // Menangkap event drag mouse agar interaksi slider volume/scrubber tidak terputus di tengah jalan
-        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+        // Local Monitor: Menangani interaksi drag kursor (scrubber volume/seek)
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             guard let self = self else { return event }
             
             switch event.type {
@@ -137,15 +165,25 @@ public final class IslandWindowController {
                 let visibleRect = self.screenDetector.currentMetrics.visibleIslandRect(width: self.viewModel.currentWidth, height: self.viewModel.currentHeight)
                 if visibleRect.contains(loc) {
                     self.isDragging = true
+                    AppLogger.window.info("[LocalMonitor] LeftMouseDown inside visibleRect -> isDragging = true")
                 }
             case .leftMouseDragged:
-                // Selama proses dragging aktif, pertahankan interaksi tetap aktif
+                // Pertahankan interaktivitas selama drag aktif
                 break
             case .leftMouseUp:
                 self.isDragging = false
-                self.updateMouseRouting(location: NSEvent.mouseLocation, source: "MouseUp")
-            case .mouseMoved:
-                self.updateMouseRouting(location: NSEvent.mouseLocation, source: "LocalMonitor")
+                AppLogger.window.info("[LocalMonitor] LeftMouseUp -> isDragging = false")
+                
+                // Evaluasi ulang posisi kursor seketika setelah mouse-up
+                let loc = NSEvent.mouseLocation
+                let visibleRect = self.screenDetector.currentMetrics.visibleIslandRect(width: self.viewModel.currentWidth, height: self.viewModel.currentHeight)
+                if !visibleRect.contains(loc) {
+                    self.setPanelInteractive(false, reason: "MOUSE_UP_OUTSIDE")
+                    if self.isMouseInside {
+                        self.isMouseInside = false
+                        self.viewModel.onHoverChanged(false)
+                    }
+                }
             default:
                 break
             }
@@ -153,67 +191,148 @@ public final class IslandWindowController {
         }
     }
     
-    /// Metode terpusat dan otoritatif untuk menentukan routing mouse dan interaktivitas panel (Phase 2 & 3)
-    public func updateMouseRouting(location: NSPoint, source: String) {
-        guard panel.isVisible else { return }
-        
-        // Deduplikasi jika monitor global dan tracking area melaporkan titik yang persis sama
-        if let last = lastReportedLocation, last == location, source == "GlobalMonitor" && !panel.ignoresMouseEvents {
-            return
-        }
-        lastReportedLocation = location
-        
+    // ==========================================
+    // AUTHORITATIVE INTERACTIVITY CONTROLLER (PART A.3)
+    // ==========================================
+    
+    /// Pengendali otoritatif tunggal untuk mengatur apakah panel menangkap mouse event atau click-through
+    public func setPanelInteractive(_ enabled: Bool, at location: NSPoint? = nil, reason: String) {
+        let loc = location ?? NSEvent.mouseLocation
         let metrics = screenDetector.currentMetrics
-        
-        // 1. Boundary visual fisik pulau aktual (tight visible rect)
         let visibleRect = metrics.visibleIslandRect(width: viewModel.currentWidth, height: viewModel.currentHeight)
-        let isOverVisibleIsland = visibleRect.contains(location)
+        let previousIgnores = panel.ignoresMouseEvents
         
-        // 2. Boundary deteksi hover dengan deadband histeresis (untuk pemicuan ekspansi yang stabil)
-        let hoverRect = metrics.hoverDetectionRect(for: viewModel.state)
-        let isInsideHover = hoverRect.contains(location)
-        
-        let isInsideFixedPanel = metrics.fixedPanelFrame.contains(location)
-        
-        // 3. Dynamic Mouse Event Routing via ignoresMouseEvents:
-        // Jika user sedang melakukan drag aktif pada kontrol (misal volume scrubber),
-        // JANGAN matikan interaktivitas di tengah jalan!
-        if !isDragging {
-            // Aturan Otoritatif:
-            // 1. Pointer di dalam bentuk fisik pulau -> ignoresMouseEvents = false (interaktif)
-            // 2. Pointer di luar bentuk fisik pulau -> ignoresMouseEvents = true (pass-through)
-            // 3. Pointer di luar bentuk pulau tapi masih di dalam frame fixed NSPanel -> WAJIB seketika ignoresMouseEvents = true!
-            let targetIgnores = !isOverVisibleIsland
+        if enabled {
+            // Konfirmasi kursor benar-benar berada di dalam bentuk pulau visual aktual
+            guard visibleRect.contains(loc) else { return }
+            
+            let targetIgnores = false
             if panel.ignoresMouseEvents != targetIgnores {
-                let previousIgnores = panel.ignoresMouseEvents
                 panel.ignoresMouseEvents = targetIgnores
-                AppLogger.window.info("[\(source)] ignoresMouseEvents: \(previousIgnores) -> \(targetIgnores) | point: (\(Int(location.x)), \(Int(location.y))) | visibleRect: \(visibleRect.debugDescription) | hoverRect: \(hoverRect.debugDescription) | fixedPanel: \(metrics.fixedPanelFrame.debugDescription) | insideFixed: \(isInsideFixedPanel) | acceptsMouseMoved: \(self.panel.acceptsMouseMovedEvents) | state: \(String(describing: self.viewModel.state))")
+                logStateTransition(reason: reason, loc: loc, visibleRect: visibleRect, previousIgnores: previousIgnores, targetIgnores: targetIgnores)
             }
+            
+            startWatchdog()
+        } else {
+            // Disabled: SEKETIKA set click-through agar aplikasi di bawahnya (browser/video) langsung menerima input path
+            let targetIgnores = true
+            if panel.ignoresMouseEvents != targetIgnores {
+                panel.ignoresMouseEvents = targetIgnores
+                logStateTransition(reason: reason, loc: loc, visibleRect: visibleRect, previousIgnores: previousIgnores, targetIgnores: targetIgnores)
+            }
+            
+            stopWatchdog()
+            
+            #if DEBUG
+            if isDiagnosticFallbackEnabled {
+                runDiagnosticFallbackTest()
+            }
+            #endif
         }
-        
-        // 4. Jika island baru saja di-dismiss (misal tombol Esc), jangan buka lagi sampai kursor benar-benar keluar
-        if isDismissedUntilExit {
-            if !isInsideHover && !isOverVisibleIsland {
-                isDismissedUntilExit = false
-                isMouseInside = false
-            }
-            if !panel.ignoresMouseEvents && !isDragging {
-                panel.ignoresMouseEvents = true
-            }
-            return
-        }
-        
-        // 5. Filter redundan untuk pemicu State Machine ViewModel
-        guard isInsideHover != isMouseInside else { return }
-        isMouseInside = isInsideHover
-        
-        AppLogger.hover.debug("[\(source)] Hover boundary crossed: inside=\(isInsideHover), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
-        
-        viewModel.onHoverChanged(isInsideHover)
     }
     
+    public func setPanelInteractive(_ enabled: Bool, reason: String) {
+        setPanelInteractive(enabled, at: nil, reason: reason)
+    }
+    
+    // ==========================================
+    // ACTIVE WATCHDOG ENGINE (PART A.2)
+    // ==========================================
+    
+    public func startWatchdog() {
+        guard watchdogTimer == nil else { return } // Menjamin tidak ada timer duplikat
+        isWatchdogRunning = true
+        AppLogger.window.info("[Watchdog] WATCHDOG_STARTED (poll: ~50Hz, mode: common)")
+        
+        let timer = Timer(timeInterval: watchdogPollingInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.watchdogTick()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.watchdogTimer = timer
+    }
+    
+    public func stopWatchdog() {
+        guard watchdogTimer != nil else { return }
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
+        isWatchdogRunning = false
+        AppLogger.window.info("[Watchdog] WATCHDOG_STOPPED")
+    }
+    
+    @MainActor
+    public func watchdogTick() {
+        guard panel.isVisible else { return }
+        let loc = NSEvent.mouseLocation
+        
+        // Rekalkulasi dinamis bentuk pulau aktual (menyesuaikan saat animasi ukuran berlangsung)
+        let metrics = screenDetector.currentMetrics
+        let visibleRect = metrics.visibleIslandRect(width: viewModel.currentWidth, height: viewModel.currentHeight)
+        let isInsideVisible = visibleRect.contains(loc)
+        
+        // Selama user aktif melakukan drag pada kontrol (slider), lindungi interaksi
+        if isDragging {
+            return
+        }
+        
+        if !isInsideVisible {
+            // 1. SEKETIKA nonaktifkan interaktivitas panel SEBELUM memicu collapse atau transisi lainnya!
+            setPanelInteractive(false, reason: "WATCHDOG_POINTER_OUTSIDE_VISIBLE_RECT")
+            
+            // 2. Perbarui status hover secara terpisah tanpa menunda rilis event input
+            if isMouseInside {
+                isMouseInside = false
+                AppLogger.hover.debug("[Watchdog] Hover boundary exited: inside=false, point=(\(loc.x), \(loc.y)), state=\(String(describing: self.viewModel.state))")
+                viewModel.onHoverChanged(false)
+            }
+        } else {
+            // Kursor di dalam pulau visual: perbarui histeresis hover
+            let hoverRect = metrics.hoverDetectionRect(for: viewModel.state)
+            let isInsideHover = hoverRect.contains(loc)
+            
+            if isInsideHover != isMouseInside {
+                isMouseInside = isInsideHover
+                AppLogger.hover.debug("[Watchdog] Hover boundary updated: inside=\(isInsideHover), point=(\(loc.x), \(loc.y)), state=\(String(describing: self.viewModel.state))")
+                viewModel.onHoverChanged(isInsideHover)
+            }
+        }
+    }
+    
+    /// Metode pembantu untuk routing mouse (kompatibilitas pengujian)
+    public func updateMouseRouting(location: NSPoint, source: String) {
+        let metrics = screenDetector.currentMetrics
+        let visibleRect = metrics.visibleIslandRect(width: viewModel.currentWidth, height: viewModel.currentHeight)
+        
+        if visibleRect.contains(location) {
+            setPanelInteractive(true, at: location, reason: source)
+        } else {
+            if !isDragging {
+                setPanelInteractive(false, at: location, reason: source)
+            }
+        }
+    }
+    
+    private func logStateTransition(reason: String, loc: NSPoint, visibleRect: CGRect, previousIgnores: Bool, targetIgnores: Bool) {
+        let metrics = screenDetector.currentMetrics
+        AppLogger.window.info("[\(reason)] PANEL_INTERACTIVE=\(!targetIgnores) | ignoresMouseEvents: \(previousIgnores) -> \(targetIgnores) | loc: (\(Int(loc.x)), \(Int(loc.y))) | visibleRect: \(visibleRect.debugDescription) | fixedFrame: \(metrics.fixedPanelFrame.debugDescription) | level: \(self.panel.level.rawValue) | state: \(String(describing: self.viewModel.state)) | watchdog: \(self.isWatchdogRunning) | isDragging: \(self.isDragging)")
+    }
+    
+    #if DEBUG
+    private func runDiagnosticFallbackTest() {
+        diagnosticLastExitTimestamp = Date()
+        let wasVisible = panel.isVisible
+        AppLogger.window.info("[DiagnosticFallback] Pointer exited visible island. Timestamp: \(Date()), wasVisible: \(wasVisible). Performing temporary orderOut test...")
+        panel.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            self.panel.orderFrontRegardless()
+            AppLogger.window.info("[DiagnosticFallback] Temporary orderOut test completed, restored orderFrontRegardless.")
+        }
+    }
+    #endif
+    
     private func repositionPanel(metrics: IslandLayoutMetrics) {
-        // Hanya dipanggil saat konfigurasi monitor berubah atau sistem bangun dari tidur
         let frame = metrics.fixedPanelFrame
         if panel.frame != frame {
             AppLogger.window.info("Repositioning fixed panel frame to \(frame.debugDescription)")
@@ -223,9 +342,6 @@ public final class IslandWindowController {
     }
     
     private func handleStateResize(state: IslandDisplayState, isImmediate: Bool) {
-        // Pada Arsitektur Fixed-Size NSPanel (seperti sayweer/dynamicIsland):
-        // panel.setFrame TIDAK PERNAH dipanggil saat hover expand atau collapse!
-        // Ukuran jendela fisik tetap konstan, sementara konten SwiftUI di dalamnya mengalir ke bawah.
-        // Ini menjamin kestabilan posisi jangkar atas (zero detachment) dan menghindari gangguan auto-hide Window Server.
+        // Pada Arsitektur Fixed-Size NSPanel: frame fisik jendela tidak pernah di-resize saat hover!
     }
 }

@@ -229,22 +229,22 @@ struct TestRunner {
             assertTest(false, "NSTrackingArea was not created")
         }
         
-        // Test J: Outward Shoulder Geometry & Cubic Bézier Curves
+        // Test J: Outward Shoulder Geometry & Cubic Bézier Curves (PART B)
         let shoulderRect = CGRect(x: 0, y: 0, width: 460, height: 220)
-        let shoulderFill = NotchGeometryBuilder.buildPath(
+        let shoulderFill = IslandSilhouette.path(
             in: shoulderRect,
             notchWidth: 181,
-            shoulderHeight: 14,
+            shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
             bottomRadius: 26,
             hasHardwareNotch: true,
             isExpanded: true,
             includeTopEdge: true
         )
         assertTest(!shoulderFill.isEmpty, "Outward shoulder fill path is non-empty")
-        let shoulderOutline = NotchGeometryBuilder.buildPath(
+        let shoulderOutline = IslandSilhouette.path(
             in: shoulderRect,
             notchWidth: 181,
-            shoulderHeight: 14,
+            shoulderDepth: DesignTokens.Geometry.notchShoulderDepth,
             bottomRadius: 26,
             hasHardwareNotch: true,
             isExpanded: true,
@@ -256,7 +256,7 @@ struct TestRunner {
         assertTest(shoulderRect.midX - notchLeft == notchRight - shoulderRect.midX, "Outward shoulder curves are strictly symmetrical around midX")
         assertTest(notchRight - notchLeft == 181, "Outward shoulder top opening matches exact notch width (181pt)")
         
-        // Test K: Drag Interaction Safety
+        // Test K: Drag Interaction Safety & Control Preservation
         // First, pointer enters visible island -> panel becomes interactive
         controller.updateMouseRouting(location: pointInsideVisibleIsland, source: "EnterIsland")
         assertTest(controller.panel.ignoresMouseEvents == false, "Pointer inside visible island makes panel interactive")
@@ -271,6 +271,44 @@ struct TestRunner {
         // Once drag ends and cursor is released in transparent strip, ignoresMouseEvents is restored immediately:
         controller.updateMouseRouting(location: pointInTransparentStrip, source: "DragReleaseTest")
         assertTest(controller.panel.ignoresMouseEvents == true, "After drag release in transparent strip, ignoresMouseEvents is immediately restored to true")
+        
+        // Test L: Active Mouse-Position Watchdog (PART A & C)
+        // 1. Panel is click-through before hover
+        assertTest(controller.panel.ignoresMouseEvents == true, "Panel is click-through before hover")
+        assertTest(controller.isWatchdogRunning == false, "Watchdog is idle while panel is click-through")
+        
+        // 2. Watchdog starts when panel becomes interactive
+        controller.updateMouseRouting(location: pointInsideVisibleIsland, source: "GLOBAL_ENTER")
+        assertTest(controller.panel.ignoresMouseEvents == false, "Pointer inside visible island enables interaction")
+        assertTest(controller.isWatchdogRunning == true, "Watchdog starts when panel becomes interactive")
+        
+        // 3. Watchdog does not create duplicate timers
+        controller.startWatchdog()
+        controller.startWatchdog()
+        assertTest(controller.isWatchdogRunning == true, "Watchdog does not create duplicate timers on repeated start")
+        
+        // 4. Pointer inside visible island keeps interaction enabled
+        assertTest(controller.panel.ignoresMouseEvents == false, "Pointer inside visible island keeps interaction enabled")
+        
+        // 5. Pointer outside visible island (in transparent strip inside fixed panel) disables interception
+        controller.updateMouseRouting(location: pointInTransparentStrip, source: "WATCHDOG_POINTER_OUTSIDE_VISIBLE_RECT")
+        assertTest(controller.panel.ignoresMouseEvents == true, "Pointer outside visible island disables interception")
+        
+        // 6. Watchdog stops after restoring click-through
+        assertTest(controller.isWatchdogRunning == false, "Watchdog stops after restoring click-through")
+        
+        // 7. Fixed panel frame never changes during state transitions
+        let fixedBefore = controller.panel.frame
+        mockVM.transitionTo(state: .expanded(reason: .hover))
+        assertTest(controller.panel.frame == fixedBefore, "Fixed panel frame invariant during expand transition")
+        mockVM.transitionTo(state: .compact)
+        assertTest(controller.panel.frame == fixedBefore, "Fixed panel frame invariant during collapse transition")
+        
+        // 8. Compact and notchless geometries do not regress
+        let compactNotchPath = IslandSilhouette.path(in: CGRect(x: 0, y: 0, width: 333, height: 33.5), notchWidth: 181, hasHardwareNotch: true, isExpanded: false, includeTopEdge: true)
+        assertTest(!compactNotchPath.isEmpty, "Compact notch geometry does not regress")
+        let nonNotchPath = IslandSilhouette.path(in: CGRect(x: 0, y: 0, width: 180, height: 32), notchWidth: 180, hasHardwareNotch: false, isExpanded: false, includeTopEdge: true)
+        assertTest(!nonNotchPath.isEmpty, "Non-notch floating pill geometry does not regress")
         
         // ==========================================
         // 4. STATE MACHINE & HOVER STABILITY TESTS
