@@ -1,0 +1,6 @@
+.DS_Store
+.build/
+Package.resolved
+DynamicIsland.app/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
