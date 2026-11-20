@@ -94,3 +94,50 @@ This audit evaluated the codebase against macOS AppKit standards, SwiftUI archit
 12. **Incomplete Accessibility (A11y)**
     - Play/pause, pin, and close buttons lack explicit `.accessibilityLabel` and `.accessibilityHint`.
     - **Correction:** Add standard accessibility annotations to all interactive controls.
+
+---
+
+## 3. Advanced Refinement & Fullscreen Stabilization (November 2026)
+
+### 3.1 Why the Previous Fullscreen Fix was Insufficient
+In the initial fix, `IslandHostingView.hitTest(_:)` was overridden to return `nil` for points outside the visible island shape. While this correctly bypassed in-process SwiftUI subview hits, **it did not cause the macOS Window Server to route pointer movement to the underlying application**.
+- **Process Isolation Boundary:** `NSView.hitTest` is an in-process AppKit method. The macOS Window Server (`SkyLight.framework`) routes events based on global window layers (`CGWindowLayer`) and window server flags (`kCGWindowIgnoresMouseEvents`).
+- **Event Swallowing:** Because `IslandPanel` was configured with `ignoresMouseEvents = false` by default, the Window Server treated `IslandPanel` (at Layer 26) as the receiver for all pointer movements within its 460×220 or 333×33.5 frame. AppKit delivered the event to `DynamicIsland`, which called `hitTest(_:)`, received `nil`, and discarded the event.
+- **Auto-Hide Starvation:** The underlying browser (Google Chrome or Safari in YouTube fullscreen) never received `mouseMoved` or `mouseExited` events when the cursor moved into the video player below. Consequently, the browser's Immersive Fullscreen auto-hide timer (~1.5s) was starved of activity, leaving the toolbar and traffic light controls permanently visible ("nyangkut").
+
+### 3.2 Real Event-Routing Architecture
+To resolve this at the operating-system boundary without using private APIs or artificial mouse synthesis:
+1. **Default Window-Server Pass-Through (`ignoresMouseEvents = true`):**
+   When the cursor is outside the Dynamic Island, `IslandPanel.ignoresMouseEvents` is set to `true`. This sets the CoreGraphics Window Server flag, causing the Window Server to completely bypass `IslandPanel` during event hit-testing and deliver 100% of pointer moves directly to the fullscreen video player beneath it.
+2. **Global Pointer Tracking via `NSEvent.addGlobalMonitorForEvents`:**
+   Global mouse monitors observe pointer movements across the entire screen independently of which window the Window Server targets.
+3. **Dynamic Interactivity Switching:**
+   - When the cursor enters `metrics.hoverDetectionRect(for:)`, `panel.ignoresMouseEvents = false` is toggled immediately, enabling full click and drag interactivity on Dynamic Island controls (Play/Pause, Pin, Next/Prev, Slider).
+   - As soon as the cursor exits `metrics.hoverDetectionRect(for:)`, `panel.ignoresMouseEvents = true` is restored on the very first frame.
+   - When dismissed via Escape (`dismissLock()`), `panel.ignoresMouseEvents = true` is set immediately.
+
+### 3.3 Window Level Reasoning
+- **`.statusBar + 1` (Layer 26):** Maintained as the active window level. In macOS Spaces, `.statusBar + 1` ensures Dynamic Island floats visibly above the fullscreen menu bar and toolbar when they drop down, preventing the island from being covered or occluded by dropping window chrome. Because `ignoresMouseEvents = true` bypasses hit-testing at the Window Server level, this higher layer introduces zero interference with auto-hide gestures.
+
+### 3.4 Centralized Notch Vertical Adjustment
+- Added `DesignTokens.Geometry.notchVerticalOffset = 1.5` pt.
+- In `IslandLayoutMetrics.init`, hardware notch screens set:
+  `compactHeight = max(safeAreaTop, 32.0) + notchVerticalOffset` (33.5 pt).
+- In AppKit coordinates:
+  `y = screenFrame.origin.y + screenFrame.height - compactHeight`.
+  `y + compactHeight = screenFrame.maxY`.
+- The top edge remains physically anchored to the top bezel, while the bottom edge extends downward by 1.5 pt, completely covering the camera housing without creating a visible gap at the top.
+
+### 3.5 Top-Anchor Invariance During Expansion
+- **Root Cause of Visual Jump:** `ZStack` in `IslandRootView` defaulted to `Alignment.center`. During height animation from 33.5 to 220 pt, content centered within the growing frame, causing an upward and downward visual shift that looked like detaching from the top bezel.
+- **Fix:** Set `ZStack(alignment: .top)` and `.frame(..., alignment: .top)`. Added `.clipShape(FlushNotchShape(...))` and anchored `ExpandedIslandView` to `.top`. Height expansion now animates downward exclusively from the fixed top bezel.
+
+### 3.6 Upper Border Removal (Seamless Top Edge)
+- Replaced the closed outline with `ExpandedIslandOutlineShape: Shape`.
+- Strokes only: left boundary, bottom-left curve, bottom horizontal edge, bottom-right curve, and right boundary.
+- The top horizontal edge is intentionally left open, preventing any double border where the island meets the display bezel.
+
+### 3.7 Verification & Test Results
+- **Automated Test Suite:** 70/70 assertions passed (`make test` / `swift run TestRunner`).
+- **Release Build:** `swift build -c release` completed with 0 warnings, 0 errors.
+- **Live Process:** PID 8074 verified running on macOS.

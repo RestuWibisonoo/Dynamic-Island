@@ -335,7 +335,7 @@ public struct ExpandedIslandView: View {
             .padding(.horizontal, DesignTokens.Spacing.xl)
             .padding(.bottom, DesignTokens.Spacing.md)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
     }
     

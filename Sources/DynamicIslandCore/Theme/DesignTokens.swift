@@ -14,6 +14,11 @@ public enum DesignTokens {
         public static let xxl: CGFloat = 16
     }
     
+    public enum Geometry {
+        /// Penyesuaian vertikal ke bawah (dalam pt) agar menutupi tompel fisik notch 100% tanpa celah di atas
+        public static let notchVerticalOffset: CGFloat = 1.5
+    }
+    
     public enum CornerRadius {
         public static let compactNotchBottom: CGFloat = 12
         public static let compactPill: CGFloat = 16

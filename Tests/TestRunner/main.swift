@@ -37,21 +37,24 @@ struct TestRunner {
             rawNotchWidth: 179,
             safeAreaTop: 32
         )
+        let expectedHeight = 32.0 + DesignTokens.Geometry.notchVerticalOffset
         assertTest(notchMetrics.hasHardwareNotch == true, "Hardware notch flag detected correctly")
-        assertTest(notchMetrics.notchHeight == 32, "Notch height matches 32pt baseline")
-        assertTest(notchMetrics.compactHeight == 32, "Compact height matches notch height")
+        assertTest(notchMetrics.notchHeight == expectedHeight, "Notch height includes 1.5pt downward offset (\(expectedHeight)pt)")
+        assertTest(notchMetrics.compactHeight == notchMetrics.notchHeight, "Compact height matches notch height")
         assertTest(notchMetrics.notchWidth == 181, "Notch width adds 2pt safety margin (179 + 2 = 181)")
         assertTest(notchMetrics.compactWidth == 181 + (76 * 2), "Compact width includes both ears (333pt)")
         
         let compactFrame = notchMetrics.panelFrame(for: .compact)
         assertTest(compactFrame.origin.x == (1470 - 333) / 2, "Compact panel is horizontally centered")
-        assertTest(compactFrame.origin.y == 956 - 32, "Compact panel is pinned to screen top (y = 924)")
+        assertTest(compactFrame.maxY == 956, "Compact panel top is pinned to screen top (maxY = 956)")
+        assertTest(compactFrame.origin.y == 956 - expectedHeight, "Compact panel origin y matches screen top minus height")
         
         let expandedFrame = notchMetrics.panelFrame(for: .expanded(reason: .hover))
         assertTest(expandedFrame.width == 460, "Expanded panel width is 460pt")
         assertTest(expandedFrame.height == 220, "Expanded panel height is 220pt")
         assertTest(expandedFrame.origin.x == (1470 - 460) / 2, "Expanded panel is horizontally centered")
-        assertTest(expandedFrame.origin.y == 956 - 220, "Expanded panel is pinned to screen top (y = 736)")
+        assertTest(expandedFrame.maxY == 956, "Expanded panel top is pinned to screen top (maxY = 956)")
+        assertTest(compactFrame.maxY == expandedFrame.maxY, "Top anchor remains 100% invariant during expansion (compact.maxY == expanded.maxY)")
         
         // Idempotency: repeated calls yield identical frames
         let compactFrame2 = notchMetrics.panelFrame(for: .compact)
@@ -144,6 +147,21 @@ struct TestRunner {
         simulatedIslandWidth = 460
         simulatedIslandHeight = 220
         assertTest(hostingView.hitTest(pointOutsideIsland) != nil, "Hit-test at (230, 50) returns view when island is expanded")
+        
+        // Test D: Open Top Outline Shape (No upper border across physical bezel)
+        let outlineShape = ExpandedIslandOutlineShape(cornerRadius: 26, hasHardwareNotch: true)
+        let outlinePath = outlineShape.path(in: CGRect(x: 0, y: 0, width: 460, height: 220))
+        assertTest(!outlinePath.isEmpty, "Expanded outline path is generated")
+        // The outline starts at (0, 0) and ends at (460, 0) without a top horizontal closing segment
+        let pathBounds = outlinePath.boundingRect
+        assertTest(pathBounds.width > 400 && pathBounds.height > 200, "Outline shape spans full card bounds")
+        
+        // Test E: Panel ignoresMouseEvents behavior
+        let testPanel = IslandPanel(contentRect: NSRect(x: 100, y: 100, width: 333, height: 33.5))
+        assertTest(testPanel.ignoresMouseEvents == true, "Panel ignores mouse events by default (pass-through for fullscreen auto-hide)")
+        testPanel.ignoresMouseEvents = false
+        assertTest(testPanel.ignoresMouseEvents == false, "Panel enables mouse events dynamically when cursor enters island")
+        assertTest(testPanel.level == .statusBar + 1, "Panel maintains .statusBar + 1 window level")
         
         // ==========================================
         // 4. STATE MACHINE & HOVER STABILITY TESTS

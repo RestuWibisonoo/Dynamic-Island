@@ -32,8 +32,8 @@ public struct IslandLayoutMetrics: Equatable, Sendable {
         if hasHardwareNotch {
             // Lebar notch hardware + toleransi 2pt
             self.notchWidth = max(rawNotchWidth + 2.0, 180)
-            // Tinggi notch hardware pas 32.0pt (atau safeAreaTop)
-            self.notchHeight = max(safeAreaTop, 32.0)
+            // Tinggi notch hardware pas 32.0pt (atau safeAreaTop) ditambah notchVerticalOffset agar menutupi notch fisik 100% tanpa celah di atas
+            self.notchHeight = max(safeAreaTop, 32.0) + DesignTokens.Geometry.notchVerticalOffset
             self.compactWidth = self.notchWidth + (earWidth * 2)
             self.compactHeight = self.notchHeight
         } else {

@@ -11,9 +11,10 @@ final class GeometryTests: XCTestCase {
             safeAreaTop: 32
         )
         
+        let expectedHeight = 32.0 + DesignTokens.Geometry.notchVerticalOffset
         XCTAssertTrue(metrics.hasHardwareNotch)
-        XCTAssertEqual(metrics.notchHeight, 32)
-        XCTAssertEqual(metrics.compactHeight, 32)
+        XCTAssertEqual(metrics.notchHeight, expectedHeight)
+        XCTAssertEqual(metrics.compactHeight, expectedHeight)
         // notchWidth = 179 + 2 = 181
         XCTAssertEqual(metrics.notchWidth, 181)
         // compactWidth = 181 + 76 * 2 = 333
@@ -22,9 +23,10 @@ final class GeometryTests: XCTestCase {
         // Compact Panel Frame
         let compactFrame = metrics.panelFrame(for: .compact)
         XCTAssertEqual(compactFrame.width, 333)
-        XCTAssertEqual(compactFrame.height, 32)
+        XCTAssertEqual(compactFrame.height, expectedHeight)
         XCTAssertEqual(compactFrame.origin.x, (1470 - 333) / 2)
-        XCTAssertEqual(compactFrame.origin.y, 956 - 32)
+        XCTAssertEqual(compactFrame.origin.y, 956 - expectedHeight)
+        XCTAssertEqual(compactFrame.maxY, 956)
         
         // Expanded Panel Frame
         let expandedFrame = metrics.panelFrame(for: .expanded(reason: .hover))
@@ -32,6 +34,10 @@ final class GeometryTests: XCTestCase {
         XCTAssertEqual(expandedFrame.height, 220)
         XCTAssertEqual(expandedFrame.origin.x, (1470 - 460) / 2)
         XCTAssertEqual(expandedFrame.origin.y, 956 - 220)
+        XCTAssertEqual(expandedFrame.maxY, 956)
+        
+        // Top anchor invariance
+        XCTAssertEqual(compactFrame.maxY, expandedFrame.maxY)
     }
     
     func testNonNotchFloatingPillMetrics() {

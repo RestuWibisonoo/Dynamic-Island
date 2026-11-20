@@ -93,7 +93,9 @@ public final class IslandWindowController {
         
         // Reset hover state jika user menutup paksa via Escape
         viewModel.onDismissLock = { [weak self] in
-            self?.isDismissedUntilExit = true
+            guard let self = self else { return }
+            self.isDismissedUntilExit = true
+            self.panel.ignoresMouseEvents = true
         }
     }
     
@@ -125,7 +127,23 @@ public final class IslandWindowController {
                 isDismissedUntilExit = false
                 isMouseInside = false
             }
+            if !panel.ignoresMouseEvents {
+                panel.ignoresMouseEvents = true
+            }
             return
+        }
+        
+        // Kontrol interaktivitas dinamis (Dynamic Mouse Event Routing):
+        // Ketika pointer berada di dalam batas pulau, aktifkan interaksi (ignoresMouseEvents = false)
+        // sehingga user dapat mengklik tombol kontrol (Play, Pause, Pin, Slider).
+        // Ketika pointer bergerak ke luar batas pulau, setel ignoresMouseEvents = true seketika!
+        // Ini memastikan macOS Window Server meneruskan 100% event pergerakan kursor ke aplikasi
+        // fullscreen di bawahnya (Chrome/Safari/YouTube) sehingga kontrol navigasi & tombol traffic light
+        // dapat melakukan auto-hide secara mulus tanpa terhalang sama sekali.
+        let targetIgnores = !inside
+        if panel.ignoresMouseEvents != targetIgnores {
+            panel.ignoresMouseEvents = targetIgnores
+            AppLogger.window.debug("panel.ignoresMouseEvents updated to \(targetIgnores)")
         }
         
         // Filter redudan: hanya proses jika terjadi perubahan batas (masuk atau keluar)

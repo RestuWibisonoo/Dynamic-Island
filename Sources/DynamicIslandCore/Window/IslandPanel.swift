@@ -36,6 +36,7 @@ public final class IslandPanel: NSPanel {
         self.isReleasedWhenClosed = false
         self.becomesKeyOnlyIfNeeded = false
         self.acceptsMouseMovedEvents = false
+        self.ignoresMouseEvents = true
         
         setupKeyMonitors()
     }
