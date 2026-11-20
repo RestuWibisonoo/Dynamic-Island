@@ -156,12 +156,39 @@ struct TestRunner {
         let pathBounds = outlinePath.boundingRect
         assertTest(pathBounds.width > 400 && pathBounds.height > 200, "Outline shape spans full card bounds")
         
-        // Test E: Panel ignoresMouseEvents behavior
+        // Test E: Panel ignoresMouseEvents & Window Level behavior
         let testPanel = IslandPanel(contentRect: NSRect(x: 100, y: 100, width: 333, height: 33.5))
         assertTest(testPanel.ignoresMouseEvents == true, "Panel ignores mouse events by default (pass-through for fullscreen auto-hide)")
         testPanel.ignoresMouseEvents = false
         assertTest(testPanel.ignoresMouseEvents == false, "Panel enables mouse events dynamically when cursor enters island")
-        assertTest(testPanel.level == .statusBar + 1, "Panel maintains .statusBar + 1 window level")
+        let expectedLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 8)
+        assertTest(testPanel.level == expectedLevel, "Panel maintains Layer 33 window level (.statusBar + 8) to avoid collision with Chrome Layer 26")
+        assertTest(testPanel.canBecomeKey == true, "Panel can become key without activation for internal interactive controls")
+        
+        // Test F: Fixed-Size NSPanel Architecture & Visible Island Rect
+        let fixedFrame = notchMetrics.fixedPanelFrame
+        assertTest(fixedFrame.width == 520, "Fixed panel width is max(expanded, compact) + 60 = 520pt")
+        assertTest(fixedFrame.height == 260, "Fixed panel height is expandedHeight + 40 = 260pt")
+        assertTest(fixedFrame.maxY == 956, "Fixed panel top edge is permanently anchored at screen maxY = 956")
+        
+        let compactVisible = notchMetrics.visibleIslandRect(for: .compact)
+        assertTest(compactVisible.width == notchMetrics.compactWidth, "Compact visible rect width matches compactWidth (333pt)")
+        let expandedVisible = notchMetrics.visibleIslandRect(for: .expanded(reason: .hover))
+        assertTest(expandedVisible.width == notchMetrics.expandedWidth, "Expanded visible rect width matches expandedWidth (460pt)")
+        
+        // Test G: Window Controller Frame Invariance During Hover & State Changes
+        let mockDetector = ScreenDetector()
+        let mockVM = IslandViewModel(screenDetector: mockDetector)
+        let controller = IslandWindowController(viewModel: mockVM, screenDetector: mockDetector)
+        
+        assertTest(controller.panel.ignoresMouseEvents == true, "Panel ignores mouse events initially")
+        assertTest(controller.panel.frame == mockDetector.currentMetrics.fixedPanelFrame, "Panel starts with fixed panel frame")
+        
+        mockVM.transitionTo(state: .expanded(reason: .hover))
+        assertTest(controller.panel.frame == mockDetector.currentMetrics.fixedPanelFrame, "Expanding state DOES NOT resize NSPanel (panel frame remains invariant)")
+        
+        mockVM.transitionTo(state: .compact)
+        assertTest(controller.panel.frame == mockDetector.currentMetrics.fixedPanelFrame, "Collapsing state DOES NOT resize NSPanel (panel frame remains invariant)")
         
         // ==========================================
         // 4. STATE MACHINE & HOVER STABILITY TESTS

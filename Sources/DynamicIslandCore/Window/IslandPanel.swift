@@ -19,7 +19,9 @@ public final class IslandPanel: NSPanel {
             defer: false
         )
         
-        self.level = .statusBar + 1
+        // .statusBar(25) + 8 (Layer 33, dari sayweer/dynamicIsland):
+        // Mencegah z-order contention dengan menu bar items dan Chrome fullscreen notch auxiliary (Layer 26)
+        self.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 8)
         self.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -72,6 +74,8 @@ public final class IslandPanel: NSPanel {
         }
     }
     
-    public override var canBecomeKey: Bool { false }
+    // canBecomeKey diatur true (seperti sayweer/Atoll) agar kontrol di dalam panel (slider, tombol)
+    // dapat menerima interaksi langsung tanpa mengaktifkan aplikasi (karena styleMask .nonactivatingPanel).
+    public override var canBecomeKey: Bool { true }
     public override var canBecomeMain: Bool { false }
 }

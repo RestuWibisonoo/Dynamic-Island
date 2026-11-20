@@ -45,6 +45,38 @@ public struct IslandLayoutMetrics: Equatable, Sendable {
         }
     }
     
+    /// Ukuran tetap untuk NSPanel (Fixed-Size Window Architecture dari sayweer/dynamicIsland)
+    /// Jendela fisik berukuran tetap untuk menampung ekspansi tanpa perlu mengubah frame jendela fisik saat runtime
+    public var fixedPanelWidth: CGFloat {
+        max(expandedWidth, compactWidth) + 60
+    }
+    
+    public var fixedPanelHeight: CGFloat {
+        expandedHeight + 40
+    }
+    
+    /// Menghitung frame NSPanel tetap di koordinat layar Cocoa, di-anchor secara permanen ke tepi atas layar
+    public var fixedPanelFrame: CGRect {
+        let x = screenFrame.origin.x + (screenFrame.width - fixedPanelWidth) / 2
+        let y = screenFrame.origin.y + screenFrame.height - fixedPanelHeight
+        return CGRect(x: x, y: y, width: fixedPanelWidth, height: fixedPanelHeight)
+    }
+    
+    /// Menghitung frame bentuk pulau yang tampak (visible island) dalam koordinat layar Cocoa
+    /// Digunakan untuk penentuan interaktivitas: ignoresMouseEvents = false HANYA saat pointer berada di dalam rect ini.
+    /// Toleransi +6 ke atas agar pointer yang menyentuh tepi atas bezel tetap terdeteksi di dalam.
+    public func visibleIslandRect(width: CGFloat, height: CGFloat) -> CGRect {
+        let x = screenFrame.origin.x + (screenFrame.width - width) / 2
+        let y = screenFrame.origin.y + screenFrame.height - height
+        return CGRect(x: x, y: y, width: width, height: height + 6)
+    }
+    
+    public func visibleIslandRect(for state: IslandDisplayState) -> CGRect {
+        let width = state.isExpanded ? expandedWidth : compactWidth
+        let height = state.isExpanded ? expandedHeight : compactHeight
+        return visibleIslandRect(width: width, height: height)
+    }
+
     /// Menghitung frame NSPanel di koordinat global AppKit (mendukung multi-monitor dengan origin negatif X/Y)
     public func panelFrame(for state: IslandDisplayState) -> CGRect {
         let width = state.isExpanded ? expandedWidth : compactWidth

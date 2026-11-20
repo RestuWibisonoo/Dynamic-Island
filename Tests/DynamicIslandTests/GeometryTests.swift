@@ -101,6 +101,38 @@ final class GeometryTests: XCTestCase {
         XCTAssertTrue(expandedRect.contains(centerTop))
     }
     
+    func testFixedPanelArchitectureMetrics() {
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+            hasHardwareNotch: true,
+            rawNotchWidth: 179,
+            safeAreaTop: 32
+        )
+        
+        let expectedWidth = max(metrics.expandedWidth, metrics.compactWidth) + 60
+        let expectedHeight = metrics.expandedHeight + 40
+        XCTAssertEqual(metrics.fixedPanelWidth, expectedWidth)
+        XCTAssertEqual(metrics.fixedPanelHeight, expectedHeight)
+        
+        let fixedFrame = metrics.fixedPanelFrame
+        XCTAssertEqual(fixedFrame.width, expectedWidth)
+        XCTAssertEqual(fixedFrame.height, expectedHeight)
+        XCTAssertEqual(fixedFrame.origin.x, (1470 - expectedWidth) / 2)
+        XCTAssertEqual(fixedFrame.origin.y, 956 - expectedHeight)
+        XCTAssertEqual(fixedFrame.maxY, 956)
+        
+        // Visible island rect
+        let compactVisible = metrics.visibleIslandRect(for: .compact)
+        XCTAssertEqual(compactVisible.width, metrics.compactWidth)
+        XCTAssertEqual(compactVisible.height, metrics.compactHeight + 6)
+        XCTAssertEqual(compactVisible.maxY, 956 + 6)
+        
+        let expandedVisible = metrics.visibleIslandRect(for: .expanded(reason: .hover))
+        XCTAssertEqual(expandedVisible.width, metrics.expandedWidth)
+        XCTAssertEqual(expandedVisible.height, metrics.expandedHeight + 6)
+        XCTAssertEqual(expandedVisible.maxY, 956 + 6)
+    }
+    
     func testPanelFrameIdempotency() {
         let metrics = IslandLayoutMetrics(
             screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),

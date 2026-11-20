@@ -24,14 +24,18 @@ public final class IslandWindowController {
         self.screenDetector = screenDetector
         
         let initialMetrics = screenDetector.currentMetrics
-        let initialFrame = initialMetrics.panelFrame(for: .compact)
+        // Arsitektur Jendela Tetap (Fixed-Size NSPanel Architecture):
+        // Panel selalu berukuran tetap (maksimum dimensi ekspansi + margin) dan di-anchor ke tepi atas layar.
+        // Dengan demikian panel tidak pernah di-resize saat runtime, origin Cocoa tidak melompat,
+        // dan Dynamic Island tidak pernah terlepas dari notch fisik saat ekspansi/penyusutan.
+        let fixedFrame = initialMetrics.fixedPanelFrame
         
-        let panel = IslandPanel(contentRect: initialFrame)
+        let panel = IslandPanel(contentRect: fixedFrame)
         panel.viewModel = viewModel
         
         let rootView = IslandRootView(viewModel: viewModel)
         let hosting = IslandHostingView(rootView: AnyView(rootView))
-        hosting.frame = NSRect(origin: .zero, size: initialFrame.size)
+        hosting.frame = NSRect(origin: .zero, size: fixedFrame.size)
         
         // Konfigurasikan batas hit-testing dinamis agar piksel transparan tembus ke aplikasi di bawahnya
         hosting.islandContentRect = { [weak hosting, weak viewModel, weak screenDetector] in
@@ -86,7 +90,9 @@ public final class IslandWindowController {
             }
             .store(in: &cancellables)
         
-        // Sinkronisasi perubahan status (compact vs expanded)
+        // Sinkronisasi perubahan status (compact vs expanded):
+        // Pada Arsitektur Fixed-Size NSPanel, jendela fisik TIDAK PERNAH di-resize saat runtime.
+        // Hanya konten SwiftUI di dalamnya yang menganimasikan lebar dan tingginya secara mulus.
         viewModel.onResizeRequest = { [weak self] state, isImmediate in
             self?.handleStateResize(state: state, isImmediate: isImmediate)
         }
@@ -118,12 +124,18 @@ public final class IslandWindowController {
         guard panel.isVisible else { return }
         
         let metrics = screenDetector.currentMetrics
-        let detectionRect = metrics.hoverDetectionRect(for: viewModel.state)
-        let inside = detectionRect.contains(location)
+        
+        // 1. Hitung frame visual fisik dari pulau yang tampak saat ini (tight visible rect)
+        let visibleRect = metrics.visibleIslandRect(width: viewModel.currentWidth, height: viewModel.currentHeight)
+        let isOverVisibleIsland = visibleRect.contains(location)
+        
+        // 2. Hitung zona deteksi hover dengan deadband histeresis (untuk pemicuan ekspansi yang stabil)
+        let hoverRect = metrics.hoverDetectionRect(for: viewModel.state)
+        let isInsideHover = hoverRect.contains(location)
         
         // Jika island baru saja di-dismiss (misal tombol Esc), jangan buka lagi sampai kursor benar-benar keluar
         if isDismissedUntilExit {
-            if !inside {
+            if !isInsideHover && !isOverVisibleIsland {
                 isDismissedUntilExit = false
                 isMouseInside = false
             }
@@ -133,69 +145,43 @@ public final class IslandWindowController {
             return
         }
         
-        // Kontrol interaktivitas dinamis (Dynamic Mouse Event Routing):
-        // Ketika pointer berada di dalam batas pulau, aktifkan interaksi (ignoresMouseEvents = false)
-        // sehingga user dapat mengklik tombol kontrol (Play, Pause, Pin, Slider).
-        // Ketika pointer bergerak ke luar batas pulau, setel ignoresMouseEvents = true seketika!
+        // 3. Dynamic Mouse Event Routing via ignoresMouseEvents:
+        // HANYA ketika pointer berada tepat di atas batas fisik pulau yang tampak,
+        // aktifkan interaksi (ignoresMouseEvents = false) agar user dapat mengklik tombol kontrol (Play, Pause, Pin, Slider).
+        // Begitu pointer bergerak ke luar batas fisik pulau (menuju area video fullscreen atau toolbar Chrome),
+        // setel ignoresMouseEvents = true SEKETIKA tanpa delay!
         // Ini memastikan macOS Window Server meneruskan 100% event pergerakan kursor ke aplikasi
         // fullscreen di bawahnya (Chrome/Safari/YouTube) sehingga kontrol navigasi & tombol traffic light
         // dapat melakukan auto-hide secara mulus tanpa terhalang sama sekali.
-        let targetIgnores = !inside
+        let targetIgnores = !isOverVisibleIsland
         if panel.ignoresMouseEvents != targetIgnores {
             panel.ignoresMouseEvents = targetIgnores
             AppLogger.window.debug("panel.ignoresMouseEvents updated to \(targetIgnores)")
         }
         
-        // Filter redudan: hanya proses jika terjadi perubahan batas (masuk atau keluar)
-        guard inside != isMouseInside else { return }
-        isMouseInside = inside
+        // 4. Filter redundan untuk pemicu State Machine ViewModel
+        guard isInsideHover != isMouseInside else { return }
+        isMouseInside = isInsideHover
         
-        AppLogger.hover.debug("Hover boundary crossed: inside=\(inside), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
+        AppLogger.hover.debug("Hover boundary crossed: inside=\(isInsideHover), point=(\(location.x), \(location.y)), state=\(String(describing: self.viewModel.state))")
         
-        viewModel.onHoverChanged(inside)
+        viewModel.onHoverChanged(isInsideHover)
     }
     
     private func repositionPanel(metrics: IslandLayoutMetrics) {
-        let frame = metrics.panelFrame(for: viewModel.state)
+        // Hanya dipanggil saat konfigurasi monitor berubah atau sistem bangun dari tidur
+        let frame = metrics.fixedPanelFrame
         if panel.frame != frame {
-            AppLogger.window.info("Repositioning panel frame to \(frame.debugDescription)")
+            AppLogger.window.info("Repositioning fixed panel frame to \(frame.debugDescription)")
             panel.setFrame(frame, display: true, animate: false)
             hostingView.frame = NSRect(origin: .zero, size: frame.size)
         }
     }
     
     private func handleStateResize(state: IslandDisplayState, isImmediate: Bool) {
-        pendingShrinkWorkItem?.cancel()
-        pendingShrinkWorkItem = nil
-        
-        let targetFrame = screenDetector.currentMetrics.panelFrame(for: state)
-        
-        if isImmediate {
-            if panel.frame != targetFrame {
-                AppLogger.window.debug("Immediate panel resize: \(self.panel.frame.size.debugDescription) -> \(targetFrame.size.debugDescription)")
-                panel.setFrame(targetFrame, display: true, animate: false)
-                hostingView.frame = NSRect(origin: .zero, size: targetFrame.size)
-            }
-        } else {
-            // Berikan jeda windowShrinkDelay agar animasi SwiftUI spring selesai mengecil sebelum jendela fisik menyusut
-            AppLogger.window.debug("Scheduling delayed panel shrink (delay: \(DesignTokens.AnimationDuration.windowShrinkDelay)s)")
-            let item = DispatchWorkItem { [weak self] in
-                guard let self = self, !self.viewModel.state.isExpanded else {
-                    AppLogger.window.debug("Delayed shrink cancelled or invalidated: state is expanded")
-                    return
-                }
-                let compactFrame = self.screenDetector.currentMetrics.panelFrame(for: .compact)
-                if self.panel.frame != compactFrame {
-                    AppLogger.window.debug("Executing delayed panel shrink: \(compactFrame.size.debugDescription)")
-                    self.panel.setFrame(compactFrame, display: true, animate: false)
-                    self.hostingView.frame = NSRect(origin: .zero, size: compactFrame.size)
-                }
-            }
-            self.pendingShrinkWorkItem = item
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + DesignTokens.AnimationDuration.windowShrinkDelay,
-                execute: item
-            )
-        }
+        // Pada Arsitektur Fixed-Size NSPanel (seperti sayweer/dynamicIsland):
+        // panel.setFrame TIDAK PERNAH dipanggil saat hover expand atau collapse!
+        // Ukuran jendela fisik tetap konstan, sementara konten SwiftUI di dalamnya mengalir ke bawah.
+        // Ini menjamin kestabilan posisi jangkar atas (zero detachment) dan menghindari gangguan auto-hide Window Server.
     }
 }

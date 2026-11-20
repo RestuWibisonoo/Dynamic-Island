@@ -58,9 +58,15 @@ public struct IslandRootView: View {
                 )
             )
             .contentShape(Rectangle())
+            .onTapGesture {
+                if !viewModel.state.isExpanded {
+                    viewModel.transitionTo(state: .expanded(reason: .hover))
+                }
+            }
             
-            Spacer()
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea()
     }
 }
