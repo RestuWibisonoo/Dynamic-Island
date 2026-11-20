@@ -73,4 +73,38 @@ final class GeometryTests: XCTestCase {
         XCTAssertGreaterThan(fallback.compactWidth, 0)
         XCTAssertGreaterThan(fallback.compactHeight, 0)
     }
+    
+    func testHoverDetectionRectHysteresis() {
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+            hasHardwareNotch: true,
+            rawNotchWidth: 179,
+            safeAreaTop: 32
+        )
+        
+        let compactRect = metrics.hoverDetectionRect(for: .compact)
+        let expandedRect = metrics.hoverDetectionRect(for: .expanded(reason: .hover))
+        
+        XCTAssertGreaterThan(compactRect.width, metrics.compactWidth)
+        XCTAssertGreaterThan(expandedRect.width, metrics.expandedWidth)
+        XCTAssertGreaterThan(expandedRect.width, compactRect.width)
+        XCTAssertGreaterThan(expandedRect.height, compactRect.height)
+        
+        let centerTop = CGPoint(x: 1470 / 2, y: 956 - 16)
+        XCTAssertTrue(compactRect.contains(centerTop))
+        XCTAssertTrue(expandedRect.contains(centerTop))
+    }
+    
+    func testPanelFrameIdempotency() {
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+            hasHardwareNotch: true,
+            rawNotchWidth: 179,
+            safeAreaTop: 32
+        )
+        
+        let frame1 = metrics.panelFrame(for: .compact)
+        let frame2 = metrics.panelFrame(for: .compact)
+        XCTAssertEqual(frame1, frame2)
+    }
 }

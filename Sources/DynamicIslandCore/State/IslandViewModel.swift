@@ -19,6 +19,7 @@ public final class IslandViewModel: ObservableObject {
     
     // Callback ke Window Controller untuk penyesuaian jendela
     public var onResizeRequest: ((IslandDisplayState, Bool) -> Void)?
+    public var onDismissLock: (() -> Void)?
     
     private var hoverEnterWorkItem: DispatchWorkItem?
     private var hoverExitWorkItem: DispatchWorkItem?
@@ -61,18 +62,32 @@ public final class IslandViewModel: ObservableObject {
     // MARK: - State Machine Transitions
     
     public func onHoverChanged(_ hovering: Bool) {
-        // Jika sedang terkunci buka (isLocked), pergerakan kursor keluar tidak akan menutup island
-        if state.isLocked && !hovering {
-            isHovered = false
+        AppLogger.hover.debug("onHoverChanged called: hovering=\(hovering), currentState=\(String(describing: self.state))")
+        
+        if state.isLocked {
+            isHovered = hovering
             return
         }
         
         if hovering {
+            // Batalkan jadwal penutupan yang sedang berjalan (pointer re-entry)
             hoverExitWorkItem?.cancel()
+            hoverExitWorkItem = nil
+            
+            isHovered = true
+            
+            // Jika sudah expanded, jangan picu ekspansi ulang atau restart animasi
+            if state.isExpanded {
+                return
+            }
+            
+            // Batalkan debounce enter sebelumnya jika ada
             hoverEnterWorkItem?.cancel()
             
             let item = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
+                // Pastikan kursor masih berada di dalam sebelum melakukan ekspansi
+                guard self.isHovered && !self.state.isExpanded else { return }
                 self.transitionTo(state: .expanded(reason: .hover))
             }
             hoverEnterWorkItem = item
@@ -81,11 +96,27 @@ public final class IslandViewModel: ObservableObject {
                 execute: item
             )
         } else {
+            // Batalkan jadwal pembukaan yang belum sempat dieksekusi
             hoverEnterWorkItem?.cancel()
-            hoverExitWorkItem?.cancel()
+            hoverEnterWorkItem = nil
             
+            isHovered = false
+            
+            // Jika sudah compact, tidak ada yang perlu ditutup
+            if !state.isExpanded {
+                return
+            }
+            
+            // Jika island terkunci buka, kursor keluar tidak boleh menutup island
+            if state.isLocked {
+                return
+            }
+            
+            hoverExitWorkItem?.cancel()
             let item = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
+                // Validasi ulang: jangan tutup jika terkunci atau kursor sudah masuk kembali
+                guard !self.state.isLocked && !self.isHovered else { return }
                 self.transitionTo(state: .compact)
             }
             hoverExitWorkItem = item
@@ -105,12 +136,30 @@ public final class IslandViewModel: ObservableObject {
     }
     
     public func dismissLock() {
+        onDismissLock?()
         transitionTo(state: .compact)
     }
     
     public func transitionTo(state: IslandDisplayState) {
+        // Abaikan jika transisi menuju state yang sama persis
+        if self.state == state {
+            return
+        }
+        
+        // Batalkan semua work item pending agar transisi lama tidak menimpa state baru
         hoverEnterWorkItem?.cancel()
+        hoverEnterWorkItem = nil
         hoverExitWorkItem?.cancel()
+        hoverExitWorkItem = nil
+        
+        // Jika berpindah antara dua status expanded (misal: dari hover ke locked)
+        if self.state.isExpanded && state.isExpanded {
+            self.state = state
+            AppLogger.state.info("State updated within expanded mode: \(String(describing: state))")
+            return
+        }
+        
+        AppLogger.state.info("Transitioning state: \(String(describing: self.state)) -> \(String(describing: state))")
         
         let metrics = screenDetector.currentMetrics
         let targetWidth = state.isExpanded ? metrics.expandedWidth : metrics.compactWidth

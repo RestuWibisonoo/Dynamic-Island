@@ -52,14 +52,6 @@ public struct IslandRootView: View {
             }
             .frame(width: viewModel.currentWidth, height: viewModel.currentHeight)
             .contentShape(Rectangle())
-            .onContinuousHover { phase in
-                switch phase {
-                case .active:
-                    viewModel.onHoverChanged(true)
-                case .ended:
-                    viewModel.onHoverChanged(false)
-                }
-            }
             
             Spacer()
         }

@@ -9,6 +9,7 @@ public enum AppLogger {
     public static let display = Logger(subsystem: subsystem, category: "Display")
     public static let window = Logger(subsystem: subsystem, category: "Window")
     public static let state = Logger(subsystem: subsystem, category: "State")
+    public static let hover = Logger(subsystem: subsystem, category: "Hover")
     public static let providers = Logger(subsystem: subsystem, category: "Providers")
     public static let launchAtLogin = Logger(subsystem: subsystem, category: "LaunchAtLogin")
 }

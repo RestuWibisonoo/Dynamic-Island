@@ -60,4 +60,54 @@ final class StateMachineTests: XCTestCase {
         vm.toggleLockOpen()
         XCTAssertEqual(vm.state, .compact)
     }
+    
+    func testExpandIdempotency() {
+        let detector = ScreenDetector()
+        let vm = IslandViewModel(screenDetector: detector)
+        
+        var resizeCount = 0
+        vm.onResizeRequest = { _, isImmediate in
+            if isImmediate { resizeCount += 1 }
+        }
+        
+        vm.transitionTo(state: .expanded(reason: .hover))
+        XCTAssertEqual(resizeCount, 1)
+        
+        // Repeated expand transition should be a no-op
+        vm.transitionTo(state: .expanded(reason: .hover))
+        XCTAssertEqual(resizeCount, 1)
+        
+        // OnHoverChanged(true) while already expanded should be a no-op
+        vm.onHoverChanged(true)
+        XCTAssertEqual(resizeCount, 1)
+    }
+    
+    func testRapidEnterExitCancellation() {
+        let detector = ScreenDetector()
+        let vm = IslandViewModel(screenDetector: detector)
+        
+        vm.onHoverChanged(true)
+        XCTAssertTrue(vm.isHovered)
+        
+        vm.onHoverChanged(false)
+        XCTAssertFalse(vm.isHovered)
+        
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        XCTAssertEqual(vm.state, .compact)
+    }
+    
+    func testDismissLockNotifiesCallback() {
+        let detector = ScreenDetector()
+        let vm = IslandViewModel(screenDetector: detector)
+        
+        var notified = false
+        vm.onDismissLock = { notified = true }
+        
+        vm.toggleLockOpen()
+        XCTAssertTrue(vm.state.isLocked)
+        
+        vm.dismissLock()
+        XCTAssertTrue(notified)
+        XCTAssertEqual(vm.state, .compact)
+    }
 }

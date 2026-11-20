@@ -61,8 +61,9 @@ Dynamic Island for macOS is a lightweight, native AppKit and SwiftUI utility tha
 - **`ScreenDetector`**: Observes `NSApplication.didChangeScreenParametersNotification` and publishes updated `IslandLayoutMetrics`. Prioritizes the built-in notch display before falling back to external displays.
 
 ### Core / Window
-- **`IslandPanel`**: Subclass of `NSPanel` with `.nonactivatingPanel`, `canBecomeKey = false`, `becomesKeyOnlyIfNeeded = false`, and `.statusBar + 1` window level. Ensures full-screen video players (e.g. YouTube in Chrome/Safari) never lose key focus.
-- **`IslandWindowController`**: Manages the physical size and position of the `IslandPanel`. Immediately enlarges the panel on expansion, and shrinks it back to compact size after the collapse animation finishes (350ms).
+- **`IslandPanel`**: Subclass of `NSPanel` with `.nonactivatingPanel`, `canBecomeKey = false`, `becomesKeyOnlyIfNeeded = false`, `acceptsMouseMovedEvents = false`, and `.statusBar + 1` window level. Ensures full-screen video players (e.g. YouTube in Chrome/Safari) never lose key focus.
+- **`IslandHostingView`**: Custom `NSHostingView` subclass that overrides `hitTest(_:)`. Bounds checks against the dynamic active island geometry; transparent areas outside the island return `nil`, passing clicks, mouse moves, and hover gestures through to underlying fullscreen apps.
+- **`IslandWindowController`**: Authoritative owner of hover detection and window geometry. Replaces fragile SwiftUI hover tracking with global/local `mouseMoved` monitors and geometric hysteresis (`hoverDetectionRect`), preventing hover jitter feedback loops during window resizing. Manages the physical size and position of the `IslandPanel`. Immediately enlarges the panel on expansion, and shrinks it back to compact size after the collapse animation finishes (350ms).
 
 ### Core / State
 - **`IslandViewModel`**: Unified interaction state machine managing debounce timers, lock state, and provider data bindings.

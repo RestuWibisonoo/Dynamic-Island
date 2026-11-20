@@ -1,5 +1,7 @@
 import Foundation
 import CoreGraphics
+import AppKit
+import SwiftUI
 import DynamicIslandCore
 
 @main
@@ -51,6 +53,10 @@ struct TestRunner {
         assertTest(expandedFrame.origin.x == (1470 - 460) / 2, "Expanded panel is horizontally centered")
         assertTest(expandedFrame.origin.y == 956 - 220, "Expanded panel is pinned to screen top (y = 736)")
         
+        // Idempotency: repeated calls yield identical frames
+        let compactFrame2 = notchMetrics.panelFrame(for: .compact)
+        assertTest(compactFrame == compactFrame2, "Repeated frame queries are strictly idempotent")
+        
         // Test B: Floating Pill (Non-Notch)
         let nonNotchMetrics = IslandLayoutMetrics(
             screenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
@@ -74,9 +80,75 @@ struct TestRunner {
         assertTest(negFrame.origin.y == 1080 - 32, "Multi-screen top pinned correctly")
         
         // ==========================================
-        // 2. STATE MACHINE TESTS
+        // 2. HOVER DETECTION & HYSTERESIS TESTS
         // ==========================================
-        print("\n⚙️ Running State Machine Tests...")
+        print("\n🎯 Running Hover Detection & Hysteresis Tests...")
+        
+        let compactHoverRect = notchMetrics.hoverDetectionRect(for: .compact)
+        let expandedHoverRect = notchMetrics.hoverDetectionRect(for: .expanded(reason: .hover))
+        
+        assertTest(compactHoverRect.width > notchMetrics.compactWidth, "Compact hover rect includes horizontal deadband")
+        assertTest(expandedHoverRect.width > notchMetrics.expandedWidth, "Expanded hover rect includes horizontal deadband")
+        assertTest(expandedHoverRect.width > compactHoverRect.width, "Expanded hover rect is wider than compact hover rect")
+        assertTest(expandedHoverRect.height > compactHoverRect.height, "Expanded hover rect is taller than compact hover rect")
+        
+        // Hysteresis test: Center top point is inside BOTH compact and expanded hover zones
+        let centerTopPoint = CGPoint(x: 1470 / 2, y: 956 - 16)
+        assertTest(compactHoverRect.contains(centerTopPoint), "Compact hover zone captures cursor inside notch")
+        assertTest(expandedHoverRect.contains(centerTopPoint), "Expanded hover zone preserves cursor coverage during expansion")
+        
+        // Boundary point: 50pt below notch is OUTSIDE compact hover zone but INSIDE expanded hover zone
+        let belowNotchPoint = CGPoint(x: 1470 / 2, y: 956 - 80)
+        assertTest(!compactHoverRect.contains(belowNotchPoint), "Point below notch is OUTSIDE compact hover zone")
+        assertTest(expandedHoverRect.contains(belowNotchPoint), "Point below notch is INSIDE expanded hover zone (hysteresis)")
+        
+        // Far point: point in middle of screen is OUTSIDE both zones
+        let videoContentPoint = CGPoint(x: 1470 / 2, y: 500)
+        assertTest(!compactHoverRect.contains(videoContentPoint), "Video content point is OUTSIDE compact hover zone")
+        assertTest(!expandedHoverRect.contains(videoContentPoint), "Video content point is OUTSIDE expanded hover zone")
+        
+        // ==========================================
+        // 3. HIT-TESTING & FULLSCREEN PASS-THROUGH TESTS
+        // ==========================================
+        print("\n🪟 Running Hit-Testing & Pass-Through Tests...")
+        
+        let hostingView = IslandHostingView(rootView: AnyView(Text("Test")))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 460, height: 220)
+        
+        var simulatedIslandWidth: CGFloat = 333
+        var simulatedIslandHeight: CGFloat = 32
+        
+        hostingView.islandContentRect = {
+            let bounds = hostingView.bounds
+            let x = (bounds.width - simulatedIslandWidth) / 2
+            return CGRect(x: x, y: 0, width: simulatedIslandWidth, height: simulatedIslandHeight)
+        }
+        
+        // In unflipped window coordinate space:
+        // Window height = 220. Top of window is y = 220.
+        // A point at (230, 210) is 10pt below window top (inside the 32pt island).
+        let pointInsideIsland = NSPoint(x: 230, y: 210)
+        assertTest(hostingView.hitTest(pointInsideIsland) != nil, "Hit-test INSIDE island shape returns view (interactive)")
+        
+        // A point at (230, 50) is 170pt below window top (transparent region below compact island).
+        // Hit-test MUST return nil so clicks and mouse movement pass through to underlying fullscreen apps!
+        let pointOutsideIsland = NSPoint(x: 230, y: 50)
+        assertTest(hostingView.hitTest(pointOutsideIsland) == nil, "Hit-test in transparent area returns nil (pass-through to fullscreen app)")
+        
+        // A point at (10, 210) is near the left edge of the window, outside the 333pt notch.
+        // Hit-test MUST return nil so menu bar or tabs beneath can receive events.
+        let pointOutsideEars = NSPoint(x: 10, y: 210)
+        assertTest(hostingView.hitTest(pointOutsideEars) == nil, "Hit-test outside island horizontal ears returns nil")
+        
+        // When expanded (simulatedIslandHeight = 220, simulatedIslandWidth = 460):
+        simulatedIslandWidth = 460
+        simulatedIslandHeight = 220
+        assertTest(hostingView.hitTest(pointOutsideIsland) != nil, "Hit-test at (230, 50) returns view when island is expanded")
+        
+        // ==========================================
+        // 4. STATE MACHINE & HOVER STABILITY TESTS
+        // ==========================================
+        print("\n⚙️ Running State Machine & Hover Stability Tests...")
         
         let detector = ScreenDetector()
         let vm = IslandViewModel(screenDetector: detector)
@@ -86,29 +158,57 @@ struct TestRunner {
         assertTest(vm.state.isLocked == false, "Initial isLocked is false")
         assertTest(vm.isHovered == false, "Initial isHovered is false")
         
-        // Transition to Expanded
+        // Single transition to expanded
+        var resizeCount = 0
+        vm.onResizeRequest = { _, isImmediate in
+            if isImmediate { resizeCount += 1 }
+        }
+        
         vm.transitionTo(state: .expanded(reason: .hover))
         assertTest(vm.state == .expanded(reason: .hover), "State transitioned to .expanded(reason: .hover)")
         assertTest(vm.state.isExpanded == true, "State isExpanded is true")
-        assertTest(vm.state.isLocked == false, "State isLocked is false")
         assertTest(vm.isHovered == true, "Hover flag is true")
+        assertTest(resizeCount == 1, "First expansion triggers exactly 1 resize request")
+        
+        // Idempotency: Repeated expand requests while already expanded do NOT re-trigger resize
+        vm.transitionTo(state: .expanded(reason: .hover))
+        assertTest(resizeCount == 1, "Duplicate expand call does NOT trigger redundant resize request")
+        
+        // OnHoverChanged(true) while already expanded does NOT trigger resize
+        vm.onHoverChanged(true)
+        assertTest(resizeCount == 1, "onHoverChanged(true) while already expanded is idempotent")
         
         // Lock Open
         vm.toggleLockOpen()
         assertTest(vm.state.isLocked == true, "Island is locked open")
         assertTest(vm.state.isExpanded == true, "Island remains expanded when locked")
+        assertTest(resizeCount == 1, "Locking open an already-expanded island does not restart expansion")
         
         // Hover out does NOT collapse when locked
         vm.onHoverChanged(false)
         assertTest(vm.state.isLocked == true, "Hover out does not unlock or collapse locked island")
         
         // Dismiss Lock
+        var dismissNotified = false
+        vm.onDismissLock = { dismissNotified = true }
         vm.dismissLock()
         assertTest(vm.state == .compact, "dismissLock() returns to .compact")
         assertTest(vm.state.isExpanded == false, "Island is collapsed after dismissLock()")
+        assertTest(dismissNotified == true, "dismissLock() notifies onDismissLock observer")
+        
+        // Rapid Enter-Exit-Enter cancellation test:
+        // Enter -> starts debounce timer
+        vm.onHoverChanged(true)
+        assertTest(vm.isHovered == true, "Hover state is true after enter")
+        // Immediate exit before debounce fires -> cancels enter
+        vm.onHoverChanged(false)
+        assertTest(vm.isHovered == false, "Hover state is false after rapid exit")
+        // Let debounce duration pass
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        assertTest(vm.state == .compact, "Rapid enter-exit sequence cleanly stays compact")
         
         // ==========================================
-        // 3. PROVIDER TESTS
+        // 5. PROVIDER TESTS
         // ==========================================
         print("\n🎵 Running Provider Tests...")
         
