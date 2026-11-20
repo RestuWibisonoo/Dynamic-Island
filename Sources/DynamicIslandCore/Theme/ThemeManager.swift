@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// Mengatur preferensi tema dan warna aksen agar menyatu dengan macOS
-public enum IslandThemeMode: String, CaseIterable, Identifiable {
+public enum IslandThemeMode: String, CaseIterable, Identifiable, Sendable {
     case dark = "OLED Pure Black"
     case frostedGlass = "Frosted Glass (Vibrant)"
     case system = "Ikuti Tema macOS"
@@ -16,23 +16,22 @@ public final class ThemeManager: ObservableObject {
     
     @Published public var themeMode: IslandThemeMode = .dark
     @Published public var accentColor: Color = Color(nsColor: .controlAccentColor)
-    @Published public var customCornerRadius: CGFloat = 20
     
-    private init() {}
+    public init() {}
     
-    /// Background color untuk island container
+    /// Warna latar belakang untuk kontainer pulau
     public var containerBackgroundColor: Color {
         switch themeMode {
         case .dark:
             return Color.black
         case .frostedGlass:
-            return Color.black.opacity(0.85)
+            return Color.black.opacity(0.82)
         case .system:
-            return Color(nsColor: .windowBackgroundColor).opacity(0.92)
+            return Color(nsColor: .windowBackgroundColor).opacity(0.95)
         }
     }
     
-    /// Border stroke halus khas Apple
+    /// Border gradient specular halus khas Apple
     public var borderGradient: LinearGradient {
         LinearGradient(
             colors: [

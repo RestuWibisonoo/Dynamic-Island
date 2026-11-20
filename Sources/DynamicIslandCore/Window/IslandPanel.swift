@@ -19,10 +19,7 @@ public final class IslandPanel: NSPanel {
             defer: false
         )
         
-        // Tetap di level atas status bar
         self.level = .statusBar + 1
-        
-        // Tampil di semua virtual desktop (Spaces) dan mode fullscreen
         self.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -37,8 +34,6 @@ public final class IslandPanel: NSPanel {
         self.isMovableByWindowBackground = false
         self.hidesOnDeactivate = false
         self.isReleasedWhenClosed = false
-        
-        // PENTING: Jangan biarkan panel mencuri fokus dari pemutar video / browser fullscreen!
         self.becomesKeyOnlyIfNeeded = false
         
         setupKeyMonitors()
@@ -53,23 +48,20 @@ public final class IslandPanel: NSPanel {
         }
     }
     
-    /// Global & Local monitor untuk menangkap tombol Escape keyboard bahkan saat panel bukan Key Window
     private func setupKeyMonitors() {
-        // Monitor global: menangkap tombol Esc saat browser/fullscreen app sedang aktif
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 { // Tombol Escape
+            if event.keyCode == 53 { // Escape
                 Task { @MainActor in
-                    if let vm = self?.viewModel, vm.state == .expanded {
+                    if let vm = self?.viewModel, vm.state.isExpanded {
                         vm.dismissLock()
                     }
                 }
             }
         }
         
-        // Monitor lokal
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 { // Tombol Escape
-                if let vm = self?.viewModel, vm.state == .expanded {
+            if event.keyCode == 53 { // Escape
+                if let vm = self?.viewModel, vm.state.isExpanded {
                     vm.dismissLock()
                     return nil
                 }
@@ -78,9 +70,6 @@ public final class IslandPanel: NSPanel {
         }
     }
     
-    // PENTING: Harus FALSE agar jendela browser (YouTube / Netflix / Chrome)
-    // TIDAK PERNAH kehilangan status Key Window saat kursor diarahkan ke Dynamic Island.
-    // Dengan begitu, sistem timer auto-hide navigasi fullscreen pada video tidak akan macet/nyangkut!
     public override var canBecomeKey: Bool { false }
     public override var canBecomeMain: Bool { false }
 }

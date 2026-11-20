@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Kontainer Utama Dynamic Island:
-/// - Nol Shadow (Zero Shadow baik saat idle maupun saat hover/expanded)
-/// - Nol Border pada compact mode agar menyatu sempurna dengan layar fullscreen
+/// - Terikat dengan ThemeManager (memperbaiki bug Color.black hardcoded)
+/// - Menghilangkan shadow pada mode compact
+/// - Menghilangkan border pada mode compact agar menyatu 100% dengan bezel
 public struct IslandRootView: View {
     @ObservedObject var viewModel: IslandViewModel
     @ObservedObject var themeManager: ThemeManager = .shared
@@ -14,37 +15,35 @@ public struct IslandRootView: View {
     public var body: some View {
         VStack(spacing: 0) {
             // Offset vertikal hanya untuk Mac tanpa notch agar menjadi floating pill melayang
-            if !viewModel.screenDetector.hasHardwareNotch {
+            if !viewModel.screenDetector.currentMetrics.hasHardwareNotch {
                 Spacer().frame(height: 6)
             }
             
             ZStack {
-                // Background Pulau (Pure Black khas bezel Apple)
+                // Background Pulau (Menggunakan ThemeManager, bukan Color.black statis)
                 FlushNotchShape(
-                    cornerRadius: viewModel.state == .expanded ? 26 : (viewModel.screenDetector.hasHardwareNotch ? 12 : 16),
-                    hasHardwareNotch: viewModel.screenDetector.hasHardwareNotch,
-                    isExpanded: viewModel.state == .expanded
+                    cornerRadius: viewModel.state.isExpanded ? DesignTokens.CornerRadius.expandedCard : DesignTokens.CornerRadius.compactNotchBottom,
+                    hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch,
+                    isExpanded: viewModel.state.isExpanded
                 )
-                .fill(Color.black)
+                .fill(themeManager.containerBackgroundColor)
                 .overlay(
-                    // Garis tepi sangat halus HANYA saat expanded agar kartu terpisah rapi dari background
+                    // Garis tepi specular halus HANYA saat expanded
                     Group {
-                        if viewModel.state == .expanded {
+                        if viewModel.state.isExpanded {
                             FlushNotchShape(
-                                cornerRadius: 26,
-                                hasHardwareNotch: viewModel.screenDetector.hasHardwareNotch,
+                                cornerRadius: DesignTokens.CornerRadius.expandedCard,
+                                hasHardwareNotch: viewModel.screenDetector.currentMetrics.hasHardwareNotch,
                                 isExpanded: true
                             )
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.75)
+                            .stroke(themeManager.borderGradient, lineWidth: 0.75)
                         }
                     }
                 )
-                // SHADOW DIHILANGKAN TOTAL (Zero Shadow baik saat idle maupun saat hover/expanded)
-                // Tidak ada lagi bayangan abu-abu yang menimpa aplikasi lain!
                 
-                // Konten Dinamis
+                // Konten Dinamis berdasarkan State
                 Group {
-                    if viewModel.state == .expanded {
+                    if viewModel.state.isExpanded {
                         ExpandedIslandView(viewModel: viewModel, themeManager: themeManager)
                     } else {
                         CompactIslandView(viewModel: viewModel, themeManager: themeManager)

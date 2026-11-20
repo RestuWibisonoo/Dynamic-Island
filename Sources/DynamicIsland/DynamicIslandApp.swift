@@ -1,4 +1,5 @@
 import AppKit
+import DynamicIslandCore
 
 @main
 @MainActor

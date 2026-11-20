@@ -1,73 +1,76 @@
 import SwiftUI
 
-/// Tampilan Diperluas (Expanded) dengan desain mewah khas macOS Sonoma / Sequoia:
-/// - Area atas memiliki clearance presisi untuk modul kamera fisik notch MacBook (~185x37pt)
-/// - Tombol Pin/Kunci memiliki target klik mandiri yang responsif tanpa bentrok gesture
-/// - Hero Media Player dengan artwork ambient glow, interactive progress bar, dan live equalizer
-/// - Drop Shelf Hub & System Monitor di bagian bawah
+/// Tampilan Diperluas (Expanded) dengan visual hierarchy yang bersih, kontrol yang berfungsi nyata, dan a11y lengkap
 public struct ExpandedIslandView: View {
     @ObservedObject var viewModel: IslandViewModel
     @ObservedObject var themeManager: ThemeManager
     
+    public init(viewModel: IslandViewModel, themeManager: ThemeManager) {
+        self.viewModel = viewModel
+        self.themeManager = themeManager
+    }
+    
+    private var metrics: IslandLayoutMetrics {
+        viewModel.screenDetector.currentMetrics
+    }
+    
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DesignTokens.Spacing.md) {
             // ==========================================
             // 1. HEADER SECTION (Clearance Notch Kamera)
             // ==========================================
             HStack(alignment: .center, spacing: 0) {
                 // Sisi Kiri: Badge Sumber Pemutar
-                HStack(spacing: 5) {
+                HStack(spacing: DesignTokens.Spacing.xxs) {
                     Circle()
-                        .fill(viewModel.isPlayingMedia ? Color.green : Color.gray)
+                        .fill(viewModel.mediaProvider.isPlaying ? Color.green : Color.gray)
                         .frame(width: 6, height: 6)
-                        .shadow(color: viewModel.isPlayingMedia ? Color.green.opacity(0.8) : Color.clear, radius: 4)
                     
-                    Text("Now Playing")
+                    Text(viewModel.mediaProvider.sourceType == .mock ? "Now Playing (Demo)" : "Now Playing")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundColor(.white.opacity(0.85))
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
+                .padding(.horizontal, DesignTokens.Spacing.md)
+                .padding(.vertical, DesignTokens.Spacing.xs)
                 .background(Color.white.opacity(0.08))
                 .clipShape(Capsule())
+                .accessibilityLabel("Status pemutar: \(viewModel.mediaProvider.isPlaying ? "Memutar" : "Jeda")")
                 
                 Spacer()
                 
                 // Zona Tengah Khusus: Safe Clearance untuk Kamera Fisik Notch MacBook
-                if viewModel.screenDetector.hasHardwareNotch {
+                if metrics.hasHardwareNotch {
                     Color.clear
-                        .frame(width: viewModel.screenDetector.notchWidth, height: viewModel.screenDetector.notchHeight - 5)
+                        .frame(width: metrics.notchWidth, height: metrics.notchHeight - 6)
+                        .accessibilityHidden(true)
                     Spacer()
                 }
                 
                 // Sisi Kanan: Pin/Lock Button, Close Button, & Baterai
-                HStack(spacing: 6) {
-                    // Tombol Kunci (Pin) dengan target klik presisi
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    // Tombol Kunci (Pin)
                     Button(action: {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
-                            viewModel.toggleLockOpen()
-                        }
+                        viewModel.toggleLockOpen()
                     }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: viewModel.isLockedOpen ? "pin.fill" : "pin")
+                        HStack(spacing: DesignTokens.Spacing.xxs) {
+                            Image(systemName: viewModel.state.isLocked ? "pin.fill" : "pin")
                                 .font(.system(size: 9, weight: .bold))
-                            Text(viewModel.isLockedOpen ? "Terkunci" : "Kunci")
+                            Text(viewModel.state.isLocked ? "Terkunci" : "Kunci")
                                 .font(.system(size: 9, weight: .bold, design: .rounded))
                         }
-                        .foregroundColor(viewModel.isLockedOpen ? .black : .white.opacity(0.85))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(viewModel.isLockedOpen ? Color.white : Color.white.opacity(0.12))
+                        .foregroundColor(viewModel.state.isLocked ? .black : .white.opacity(0.85))
+                        .padding(.horizontal, DesignTokens.Spacing.md)
+                        .padding(.vertical, DesignTokens.Spacing.xs)
+                        .background(viewModel.state.isLocked ? Color.white : Color.white.opacity(0.12))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(viewModel.state.isLocked ? "Buka kunci pulau" : "Kunci pulau agar tetap terbuka")
                     
                     // Tombol Tutup Cepat (Close X)
-                    if viewModel.isLockedOpen {
+                    if viewModel.state.isLocked {
                         Button(action: {
-                            withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
-                                viewModel.dismissLock()
-                            }
+                            viewModel.dismissLock()
                         }) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 9, weight: .bold))
@@ -77,40 +80,42 @@ public struct ExpandedIslandView: View {
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Tutup Dynamic Island")
                     }
                     
                     // Status Baterai
-                    HStack(spacing: 4) {
-                        Image(systemName: viewModel.isCharging ? "bolt.fill" : "battery.100")
+                    HStack(spacing: DesignTokens.Spacing.xxs) {
+                        Image(systemName: viewModel.batteryProvider.isCharging ? "bolt.fill" : "battery.100")
                             .font(.system(size: 10))
-                            .foregroundColor(viewModel.batteryPercentage > 20 ? .green : .red)
-                        Text("\(viewModel.batteryPercentage)%")
+                            .foregroundColor(viewModel.batteryProvider.percentage > 20 ? .green : .red)
+                        Text("\(viewModel.batteryProvider.percentage)%")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, DesignTokens.Spacing.sm)
+                    .padding(.vertical, DesignTokens.Spacing.xs)
                     .background(Color.white.opacity(0.08))
                     .clipShape(Capsule())
+                    .accessibilityLabel("Baterai \(viewModel.batteryProvider.percentage) persen")
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.top, viewModel.screenDetector.hasHardwareNotch ? 6 : 10)
+            .padding(.horizontal, DesignTokens.Spacing.xl)
+            .padding(.top, metrics.hasHardwareNotch ? 6 : 10)
             
             // ==========================================
             // 2. HERO MEDIA PLAYER CARD
             // ==========================================
-            VStack(spacing: 9) {
+            VStack(spacing: DesignTokens.Spacing.sm) {
                 // Baris Atas: Artwork + Info Lagu + Kontrol Playback
-                HStack(spacing: 12) {
+                HStack(spacing: DesignTokens.Spacing.lg) {
                     // Album Artwork dengan Ambient Glow
                     ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(themeManager.accentColor.opacity(0.4))
-                            .frame(width: 50, height: 50)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.artwork, style: .continuous)
+                            .fill(themeManager.accentColor.opacity(0.35))
+                            .frame(width: 48, height: 48)
                             .blur(radius: 8)
                         
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.artwork, style: .continuous)
                             .fill(
                                 LinearGradient(
                                     colors: [
@@ -121,73 +126,78 @@ public struct ExpandedIslandView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .frame(width: 50, height: 50)
+                            .frame(width: 48, height: 48)
                             .overlay(
                                 Image(systemName: "music.note")
-                                    .font(.system(size: 22, weight: .medium))
+                                    .font(.system(size: 20, weight: .medium))
                                     .foregroundColor(.white)
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.artwork, style: .continuous)
+                                    .stroke(Color.white.opacity(0.20), lineWidth: 1)
                             )
                     }
+                    .accessibilityHidden(true)
                     
                     // Info Judul & Artis
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(viewModel.currentTrackTitle)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: DesignTokens.Spacing.xs) {
+                            Text(viewModel.mediaProvider.currentTrack?.title ?? "Tidak Ada Musik")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
                             
-                            if viewModel.isPlayingMedia {
-                                LiveEqualizerBars(color: themeManager.accentColor)
+                            if viewModel.mediaProvider.isPlaying {
+                                DeterministicEqualizerView(color: themeManager.accentColor, barCount: 4)
                             }
                         }
                         
-                        Text(viewModel.currentArtist)
+                        Text(viewModel.mediaProvider.currentTrack?.artist ?? "Pilih lagu untuk memutar")
                             .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.70))
+                            .foregroundColor(.white.opacity(0.68))
                             .lineLimit(1)
                     }
                     
                     Spacer()
                     
-                    // Tombol Kontrol Playback
-                    HStack(spacing: 14) {
-                        Button(action: {}) {
+                    // Tombol Kontrol Playback yang Berfungsi Nyata
+                    HStack(spacing: DesignTokens.Spacing.xl) {
+                        Button(action: {
+                            viewModel.mediaProvider.previousTrack()
+                        }) {
                             Image(systemName: "backward.fill")
                                 .font(.system(size: 13))
                                 .foregroundColor(.white.opacity(0.85))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Lagu sebelumnya")
                         
                         Button(action: {
-                            withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
-                                viewModel.togglePlayback()
-                            }
+                            viewModel.mediaProvider.togglePlayback()
                         }) {
                             ZStack {
                                 Circle()
                                     .fill(Color.white)
                                     .frame(width: 32, height: 32)
-                                    .shadow(color: Color.white.opacity(0.25), radius: 6)
                                 
-                                Image(systemName: viewModel.isPlayingMedia ? "pause.fill" : "play.fill")
+                                Image(systemName: viewModel.mediaProvider.isPlaying ? "pause.fill" : "play.fill")
                                     .font(.system(size: 12, weight: .bold))
                                     .foregroundColor(.black)
-                                    .offset(x: viewModel.isPlayingMedia ? 0 : 1)
+                                    .offset(x: viewModel.mediaProvider.isPlaying ? 0 : 1)
                             }
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(viewModel.mediaProvider.isPlaying ? "Jeda lagu" : "Putar lagu")
                         
-                        Button(action: {}) {
+                        Button(action: {
+                            viewModel.mediaProvider.nextTrack()
+                        }) {
                             Image(systemName: "forward.fill")
                                 .font(.system(size: 13))
                                 .foregroundColor(.white.opacity(0.85))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Lagu berikutnya")
                     }
                 }
                 
@@ -207,56 +217,63 @@ public struct ExpandedIslandView: View {
                                         endPoint: .trailing
                                     )
                                 )
-                                .frame(width: max(geo.size.width * CGFloat(viewModel.trackProgress), 4), height: 4)
+                                .frame(
+                                    width: max(geo.size.width * CGFloat(viewModel.mediaProvider.playbackProgress), 4),
+                                    height: 4
+                                )
                             
                             Circle()
                                 .fill(Color.white)
                                 .frame(width: 9, height: 9)
-                                .shadow(color: Color.black.opacity(0.5), radius: 3)
-                                .offset(x: max(geo.size.width * CGFloat(viewModel.trackProgress) - 4.5, 0))
+                                .offset(x: max(geo.size.width * CGFloat(viewModel.mediaProvider.playbackProgress) - 4.5, 0))
                         }
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { value in
-                                    viewModel.isScrubbing = true
                                     let progress = min(max(value.location.x / geo.size.width, 0.0), 1.0)
-                                    viewModel.trackProgress = Double(progress)
-                                }
-                                .onEnded { _ in
-                                    viewModel.isScrubbing = false
+                                    viewModel.mediaProvider.seek(to: Double(progress))
                                 }
                         )
                     }
                     .frame(height: 10)
+                    .accessibilityElement()
+                    .accessibilityLabel("Posisi pemutaran")
+                    .accessibilityValue("\(Int(viewModel.mediaProvider.playbackProgress * 100)) persen")
                     
                     HStack {
-                        Text(viewModel.currentTimeFormatted)
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.55))
+                        Text(formatDuration(
+                            (viewModel.mediaProvider.currentTrack?.duration ?? 0) * viewModel.mediaProvider.playbackProgress
+                        ))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.55))
+                        
                         Spacer()
-                        Text(viewModel.remainingTimeFormatted)
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.55))
+                        
+                        Text("-" + formatDuration(
+                            (viewModel.mediaProvider.currentTrack?.duration ?? 0) * (1.0 - viewModel.mediaProvider.playbackProgress)
+                        ))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.55))
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DesignTokens.Spacing.xl)
+            .padding(.vertical, DesignTokens.Spacing.md)
             .background(Color.white.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.innerCard, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.innerCard, style: .continuous)
                     .stroke(Color.white.opacity(0.10), lineWidth: 1)
             )
-            .padding(.horizontal, 12)
+            .padding(.horizontal, DesignTokens.Spacing.lg)
             
             // ==========================================
             // 3. DROP SHELF & QUICK STATS DOCK (Bottom)
             // ==========================================
-            HStack(spacing: 8) {
-                // Drop Shelf Target Area
-                HStack(spacing: 6) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                // Drop Shelf Target Area (Mock Ready)
+                HStack(spacing: DesignTokens.Spacing.xs) {
                     Image(systemName: "tray.and.arrow.down.fill")
                         .font(.system(size: 11))
                         .foregroundColor(themeManager.accentColor)
@@ -269,8 +286,8 @@ public struct ExpandedIslandView: View {
                         .font(.system(size: 10, weight: .regular))
                         .foregroundColor(.white.opacity(0.5))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DesignTokens.Spacing.md)
+                .padding(.vertical, DesignTokens.Spacing.xs)
                 .background(Color.white.opacity(0.04))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
@@ -280,16 +297,17 @@ public struct ExpandedIslandView: View {
                             style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                         )
                 )
+                .accessibilityLabel("Drop shelf, area penampungan berkas sementara")
                 
                 Spacer()
                 
-                // System Stats Pills (CPU & RAM)
-                HStack(spacing: 6) {
+                // System Stats Pills (CPU & RAM dari SystemProvider)
+                HStack(spacing: DesignTokens.Spacing.xs) {
                     HStack(spacing: 3) {
                         Image(systemName: "cpu")
                             .font(.system(size: 9))
                             .foregroundColor(.white.opacity(0.5))
-                        Text("\(viewModel.cpuUsage)%")
+                        Text("\(viewModel.systemProvider.cpuUsage)%")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.8))
                     }
@@ -302,46 +320,29 @@ public struct ExpandedIslandView: View {
                         Image(systemName: "memorychip")
                             .font(.system(size: 9))
                             .foregroundColor(.white.opacity(0.5))
-                        Text("\(viewModel.ramUsage)%")
+                        Text("\(viewModel.systemProvider.ramUsage)%")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.8))
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
+                .padding(.vertical, DesignTokens.Spacing.xs)
                 .background(Color.white.opacity(0.05))
                 .clipShape(Capsule())
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Penggunaan sistem: CPU \(viewModel.systemProvider.cpuUsage) persen, Memori \(viewModel.systemProvider.ramUsage) persen")
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.horizontal, DesignTokens.Spacing.xl)
+            .padding(.bottom, DesignTokens.Spacing.md)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
     }
-}
-
-/// 4-bar Animated Audio Frequency Equalizer
-struct LiveEqualizerBars: View {
-    let color: Color
-    @State private var animating: Bool = false
     
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<4) { index in
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(color)
-                    .frame(width: 2, height: animating ? CGFloat.random(in: 4...13) : 5)
-                    .animation(
-                        .easeInOut(duration: 0.40)
-                        .repeatForever(autoreverses: true)
-                        .delay(Double(index) * 0.12),
-                        value: animating
-                    )
-            }
-        }
-        .onAppear {
-            animating = true
-        }
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = max(Int(seconds), 0)
+        let mins = total / 60
+        let secs = total % 60
+        return String(format: "%d:%02d", mins, secs)
     }
 }
-

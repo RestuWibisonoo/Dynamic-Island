@@ -1,0 +1,76 @@
+import XCTest
+@testable import DynamicIslandCore
+
+final class GeometryTests: XCTestCase {
+    
+    func testNotchDisplayMetrics() {
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+            hasHardwareNotch: true,
+            rawNotchWidth: 179,
+            safeAreaTop: 32
+        )
+        
+        XCTAssertTrue(metrics.hasHardwareNotch)
+        XCTAssertEqual(metrics.notchHeight, 32)
+        XCTAssertEqual(metrics.compactHeight, 32)
+        // notchWidth = 179 + 2 = 181
+        XCTAssertEqual(metrics.notchWidth, 181)
+        // compactWidth = 181 + 76 * 2 = 333
+        XCTAssertEqual(metrics.compactWidth, 333)
+        
+        // Compact Panel Frame
+        let compactFrame = metrics.panelFrame(for: .compact)
+        XCTAssertEqual(compactFrame.width, 333)
+        XCTAssertEqual(compactFrame.height, 32)
+        XCTAssertEqual(compactFrame.origin.x, (1470 - 333) / 2)
+        XCTAssertEqual(compactFrame.origin.y, 956 - 32)
+        
+        // Expanded Panel Frame
+        let expandedFrame = metrics.panelFrame(for: .expanded(reason: .hover))
+        XCTAssertEqual(expandedFrame.width, 460)
+        XCTAssertEqual(expandedFrame.height, 220)
+        XCTAssertEqual(expandedFrame.origin.x, (1470 - 460) / 2)
+        XCTAssertEqual(expandedFrame.origin.y, 956 - 220)
+    }
+    
+    func testNonNotchFloatingPillMetrics() {
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+            hasHardwareNotch: false,
+            rawNotchWidth: 0,
+            safeAreaTop: 0
+        )
+        
+        XCTAssertFalse(metrics.hasHardwareNotch)
+        XCTAssertEqual(metrics.compactWidth, 180)
+        XCTAssertEqual(metrics.compactHeight, 32)
+        
+        let compactFrame = metrics.panelFrame(for: .compact)
+        XCTAssertEqual(compactFrame.origin.x, (1920 - 180) / 2)
+        XCTAssertEqual(compactFrame.origin.y, 1080 - 32)
+    }
+    
+    func testNegativeOriginMultiMonitorSupport() {
+        // Layar eksternal yang diletakkan di sebelah kiri monitor utama (origin X = -1920)
+        let metrics = IslandLayoutMetrics(
+            screenFrame: CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+            hasHardwareNotch: false,
+            rawNotchWidth: 0,
+            safeAreaTop: 0
+        )
+        
+        let compactFrame = metrics.panelFrame(for: .compact)
+        let expectedX = -1920 + (1920 - 180) / 2
+        XCTAssertEqual(compactFrame.origin.x, expectedX)
+        XCTAssertEqual(compactFrame.origin.y, 1080 - 32)
+    }
+    
+    func testFallbackMetricsSafety() {
+        let fallback = IslandLayoutMetrics.fallback
+        XCTAssertGreaterThan(fallback.screenFrame.width, 0)
+        XCTAssertGreaterThan(fallback.screenFrame.height, 0)
+        XCTAssertGreaterThan(fallback.compactWidth, 0)
+        XCTAssertGreaterThan(fallback.compactHeight, 0)
+    }
+}

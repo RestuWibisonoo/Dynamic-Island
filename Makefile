@@ -6,8 +6,9 @@ APP_BUNDLE = $(APP_NAME).app
 CONTENTS = $(APP_BUNDLE)/Contents
 MACOS = $(CONTENTS)/MacOS
 RESOURCES = $(CONTENTS)/Resources
+BUNDLE_ID = com.restuwibisono.DynamicIsland
 
-.PHONY: all build run bundle clean
+.PHONY: all build test run bundle clean
 
 all: build
 
@@ -15,9 +16,13 @@ build:
 	@echo "🔨 Mengompilasi $(APP_NAME)..."
 	swift build -c release
 
+test:
+	@echo "🧪 Menjalankan Unit Tests..."
+	swift run TestRunner
+
 run:
 	@echo "🚀 Menjalankan $(APP_NAME)..."
-	swift run
+	swift run DynamicIsland
 
 bundle: build
 	@echo "📦 Membuat macOS App Bundle ($(APP_BUNDLE))..."
@@ -30,13 +35,15 @@ bundle: build
     <key>CFBundleExecutable</key>\
     <string>$(APP_NAME)</string>\
     <key>CFBundleIdentifier</key>\
-    <string>com.user.DynamicIsland</string>\
+    <string>$(BUNDLE_ID)</string>\
     <key>CFBundleName</key>\
     <string>$(APP_NAME)</string>\
     <key>CFBundlePackageType</key>\
     <string>APPL</string>\
     <key>CFBundleShortVersionString</key>\
     <string>1.0.0</string>\
+    <key>CFBundleVersion</key>\
+    <string>1</string>\
     <key>LSUIElement</key>\
     <true/>\
     <key>NSHighResolutionCapable</key>\
